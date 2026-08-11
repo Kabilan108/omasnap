@@ -1,5 +1,6 @@
 #include "editor.hpp"
 
+#include <LayerShellQt/Window>
 #include <QtConcurrent/QtConcurrentRun>
 
 #include <QApplication>
@@ -18,10 +19,10 @@
 #include <QScreen>
 #include <QTimer>
 #include <QWheelEvent>
+#include <QWindow>
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <utility>
 
 namespace {
@@ -363,12 +364,9 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   if (mode == CaptureMode::Fullscreen) {
     selection_ = QRectF(QPointF(), capture_.preview.size());
     enterEdit(QStringLiteral(
-        "Full screen selected · native resolution · outer handles crop"));
+        "Full output selected · native resolution · outer handles crop"));
   } else if (mode == CaptureMode::Window) {
-    windowMode_ = true;
-    hoveredWindow_ = windowAt(cursor_);
-    setStatus(QStringLiteral("Window mode · click or Super+Arrows then Enter · "
-                             "Space returns to area"));
+    setStatus(QStringLiteral("Opening Niri window picker…"));
   }
   updatePointerCursor();
 }
@@ -644,53 +642,6 @@ QRectF CaptureEditor::sourceRect(const QRectF &logicalRect) const {
           logicalRect.width() * scaleX, logicalRect.height() * scaleY};
 }
 
-int CaptureEditor::windowAt(const QPointF &position) const {
-  for (int index = capture_.windows.size() - 1; index >= 0; --index) {
-    if (capture_.windows.at(index).rect.contains(position.toPoint()))
-      return index;
-  }
-  return -1;
-}
-
-int CaptureEditor::windowInDirection(int current, int key) const {
-  if (capture_.windows.isEmpty())
-    return -1;
-
-  const QPointF origin = current >= 0 && current < capture_.windows.size()
-                             ? capture_.windows.at(current).rect.center()
-                             : cursor_;
-  int best = -1;
-  qreal bestScore = std::numeric_limits<qreal>::max();
-  for (int index = 0; index < capture_.windows.size(); ++index) {
-    if (index == current)
-      continue;
-    const QPointF delta = capture_.windows.at(index).rect.center() - origin;
-    qreal along = 0;
-    qreal across = 0;
-    if (key == Qt::Key_Left && delta.x() < 0) {
-      along = -delta.x();
-      across = std::abs(delta.y());
-    } else if (key == Qt::Key_Right && delta.x() > 0) {
-      along = delta.x();
-      across = std::abs(delta.y());
-    } else if (key == Qt::Key_Up && delta.y() < 0) {
-      along = -delta.y();
-      across = std::abs(delta.x());
-    } else if (key == Qt::Key_Down && delta.y() > 0) {
-      along = delta.y();
-      across = std::abs(delta.x());
-    } else {
-      continue;
-    }
-    const qreal score = along + across * 1.75;
-    if (score < bestScore) {
-      best = index;
-      bestScore = score;
-    }
-  }
-  return best;
-}
-
 QVector<CaptureEditor::ToolbarButton> CaptureEditor::toolbarButtons() const {
   QVector<ToolbarButton> buttons;
   const qreal height = 36;
@@ -878,7 +829,6 @@ void CaptureEditor::handleEscape() {
     tool_ = Tool::Select;
     setStatus(QStringLiteral("Select/move · Esc again to close"));
   } else {
-    windowMode_ = false;
     selection_ = {};
     setStatus(QStringLiteral("Area mode · Esc again to close"));
   }
@@ -887,32 +837,52 @@ void CaptureEditor::handleEscape() {
   update();
 }
 
-void CaptureEditor::chooseWindow(int index) {
-  if (index < 0 || index >= capture_.windows.size())
+void CaptureEditor::selectNiriWindow() {
+  if (phase_ != Phase::Select || busy_)
     return;
 
-  const WindowTarget target = capture_.windows.at(index);
-  setStatus(QStringLiteral("Capturing clean window surface…"));
+  busy_ = true;
+  setStatus(QStringLiteral("Choose a window with the Niri crosshair…"));
+  update();
   QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-  QImage surface;
-  QString surfaceError;
-  if (!captureWindowSurface(target, surface, surfaceError)) {
-    qWarning().noquote()
-        << QStringLiteral("Window capture failed: %1").arg(surfaceError);
-    setStatus(QStringLiteral("Window capture failed · %1 · choose another")
-                  .arg(surfaceError));
+  hide();
+  QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
+  CaptureData selectedCapture;
+  QString error;
+  if (!captureSelectedWindow(selectedCapture, error)) {
+    busy_ = false;
+    show();
+    setFocus(Qt::ActiveWindowFocusReason);
+    setStatus(QStringLiteral("%1 · drag an area or press Space to try again")
+                  .arg(error));
     update();
     return;
   }
 
-  capture_.source = surface;
-  capture_.preview = surface.scaled(target.rect.size(), Qt::IgnoreAspectRatio,
-                                    Qt::SmoothTransformation);
-  selection_ = QRectF(QPointF(), target.rect.size());
-  windowMode_ = false;
+  capture_ = std::move(selectedCapture);
+  QScreen *targetScreen = QGuiApplication::primaryScreen();
+  for (QScreen *screen : QGuiApplication::screens()) {
+    if (screen->name() == capture_.monitor.name) {
+      targetScreen = screen;
+      break;
+    }
+  }
+  if (QWindow *window = windowHandle()) {
+    window->setScreen(targetScreen);
+    if (LayerShellQt::Window *layerWindow = LayerShellQt::Window::get(window))
+      layerWindow->setScreen(targetScreen);
+  }
+  setGeometry(targetScreen->geometry());
+  cursor_ = mapFromGlobal(QCursor::pos());
+  selection_ = QRectF(QPointF(), capture_.preview.size());
+  busy_ = false;
   enterEdit(QStringLiteral(
       "Window selected · Select moves layers · wheel zooms · outer handles "
       "crop"));
+  show();
+  setFocus(Qt::ActiveWindowFocusReason);
+  update();
 }
 
 void CaptureEditor::beginText(const QPointF &point, int annotationIndex) {
@@ -985,18 +955,6 @@ void CaptureEditor::acceptText() {
   setFocus(Qt::OtherFocusReason);
   updatePointerCursor();
   update();
-}
-
-void CaptureEditor::selectWindowInDirection(int key) {
-  int current = hoveredWindow_;
-  if (current < 0)
-    current = windowAt(cursor_);
-  const int next = windowInDirection(current, key);
-  if (next < 0)
-    return;
-  hoveredWindow_ = next;
-  setStatus(QStringLiteral("%1 · Super+Arrows choose · Enter captures")
-                .arg(capture_.windows.at(next).title));
 }
 
 void CaptureEditor::runOcr(const QRectF &localSelection) {
@@ -1131,41 +1089,17 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   }
   if (phase_ == Phase::Select) {
     if (event->matches(QKeySequence::SelectAll)) {
-      windowMode_ = false;
       dragging_ = false;
-      hoveredWindow_ = -1;
       selection_ = QRectF(QPointF(), capture_.preview.size());
       enterEdit(QStringLiteral(
-          "Full screen selected · native resolution · outer handles crop"));
+          "Full output selected · native resolution · outer handles crop"));
       update();
-      return;
-    }
-    const bool directionalKey =
-        event->key() == Qt::Key_Left || event->key() == Qt::Key_Right ||
-        event->key() == Qt::Key_Up || event->key() == Qt::Key_Down;
-    if (windowMode_ && directionalKey &&
-        event->modifiers().testFlag(Qt::MetaModifier)) {
-      selectWindowInDirection(event->key());
-      event->accept();
-      update();
-      return;
-    }
-    if (windowMode_ &&
-        (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
-      chooseWindow(hoveredWindow_);
       return;
     }
     if (event->key() == Qt::Key_Space) {
-      windowMode_ = !windowMode_;
       dragging_ = false;
       selection_ = {};
-      hoveredWindow_ = windowMode_ ? windowAt(cursor_) : -1;
-      setStatus(windowMode_
-                    ? QStringLiteral("Window mode · click or Super+Arrows then "
-                                     "Enter · Space returns to area")
-                    : QStringLiteral(
-                          "Drag to select an area · Space selects a window"));
-      updatePointerCursor();
+      selectNiriWindow();
       return;
     }
     QWidget::keyPressEvent(event);
@@ -1238,9 +1172,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
 void CaptureEditor::mouseMoveEvent(QMouseEvent *event) {
   cursor_ = event->position();
   if (phase_ == Phase::Select) {
-    if (windowMode_)
-      hoveredWindow_ = windowAt(cursor_);
-    else if (dragging_)
+    if (dragging_)
       selection_ = normalizedSelection(dragStart_, cursor_);
   } else {
     if (tool_ == Tool::Select && dragging_ &&
@@ -1393,10 +1325,6 @@ void CaptureEditor::mousePressEvent(QMouseEvent *event) {
     return;
   cursor_ = event->position();
   if (phase_ == Phase::Select) {
-    if (windowMode_) {
-      chooseWindow(windowAt(cursor_));
-      return;
-    }
     dragStart_ = cursor_;
     selection_ = {};
     dragging_ = true;
@@ -1648,7 +1576,7 @@ void CaptureEditor::wheelEvent(QWheelEvent *event) {
 
 void CaptureEditor::updatePointerCursor() {
   if (phase_ == Phase::Select) {
-    setCursor(windowMode_ ? Qt::PointingHandCursor : Qt::CrossCursor);
+    setCursor(Qt::CrossCursor);
     return;
   }
   if ((colorPaletteOpen_ && colorPaletteRect().contains(cursor_)) ||
@@ -1695,26 +1623,14 @@ void CaptureEditor::paintSelect(QPainter &painter) {
   painter.drawImage(rect(), capture_.source);
   painter.fillRect(rect(), QColor(0, 0, 0, 143));
 
-  if (windowMode_) {
-    if (hoveredWindow_ >= 0 && hoveredWindow_ < capture_.windows.size()) {
-      const QRect window = capture_.windows.at(hoveredWindow_).rect;
-      painter.drawImage(window, capture_.source, sourceRect(window));
-    }
-    for (int index = 0; index < capture_.windows.size(); ++index) {
-      const WindowTarget &window = capture_.windows.at(index);
-      painter.setPen(QPen(
-          index == hoveredWindow_ ? Qt::white : QColor(255, 255, 255, 72), 2));
-      painter.setBrush(Qt::NoBrush);
-      painter.drawRect(window.rect);
-    }
-  } else if (!selection_.isEmpty()) {
+  if (!selection_.isEmpty()) {
     painter.drawImage(selection_, capture_.source, sourceRect(selection_));
     painter.setPen(QPen(Qt::white, 2));
     painter.setBrush(Qt::NoBrush);
     painter.drawRect(selection_);
   }
 
-  if (!windowMode_ && !dragging_) {
+  if (!dragging_) {
     painter.setPen(QPen(QColor(255, 255, 255, 56), 1));
     painter.drawLine(QPointF(cursor_.x(), 0), QPointF(cursor_.x(), height()));
     painter.drawLine(QPointF(0, cursor_.y()), QPointF(width(), cursor_.y()));
@@ -1724,19 +1640,17 @@ void CaptureEditor::paintSelect(QPainter &painter) {
   badgeFont.setBold(true);
   badgeFont.setPixelSize(11);
   painter.setFont(badgeFont);
-  const QString badge =
-      windowMode_ ? QStringLiteral("WINDOW  ×") : QStringLiteral("AREA  ×");
+  const QString badge = QStringLiteral("AREA  ×");
   const int badgeWidth = painter.fontMetrics().horizontalAdvance(badge) + 24;
   const QRectF badgeRect((width() - badgeWidth) / 2.0, 12, badgeWidth, 32);
   painter.setPen(QPen(QColor(255, 255, 255, 32), 1));
   painter.setBrush(QColor(18, 18, 22, 235));
   painter.drawRoundedRect(badgeRect, 10, 10);
-  painter.setPen(windowMode_ ? QColor(QStringLiteral("#ffd60a"))
-                             : QColor(QStringLiteral("#30d158")));
+  painter.setPen(QColor(QStringLiteral("#30d158")));
   painter.drawText(badgeRect, Qt::AlignCenter, badge);
   drawHotkeyLegend(painter, rect(), cursor_,
                    {{QStringLiteral("Drag"), QStringLiteral("Area")},
-                    {QStringLiteral("Space"), QStringLiteral("Window")},
+                    {QStringLiteral("Space"), QStringLiteral("Niri window")},
                     {QStringLiteral("Ctrl+A"), QStringLiteral("Fullscreen")},
                     {QStringLiteral("Esc ×2"), QStringLiteral("Close")}});
   drawStatusPill(painter, rect(), status_);

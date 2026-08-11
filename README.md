@@ -1,105 +1,110 @@
-# Omasnap
+# Omasnap for Niri
 
-A native Wayland screenshot and annotation overlay designed for Omarchy and Hyprland.
-It captures the focused monitor before mapping an exclusive layer-shell surface, so the
-editor never appears in its own screenshot. The editor retains annotations as movable,
-resizable vector layers and preserves the monitor's native pixels on scaled displays.
+A native Wayland screenshot and annotation overlay for the Niri compositor.
+Omasnap captures the focused output before mapping its layer-shell surface, so
+the editor never appears in its own screenshot. Window selection delegates to
+Niri's compositor-native picker and window capture actions.
 
 [![Looping Omasnap demonstration](assets/omasnap.gif)](assets/omasnap.mp4)
 
 ## Features
 
-- Freeform region, window, and full-monitor capture modes.
-- Clean window-surface capture through Wayland image-copy protocols. A failed native
-  capture stays in the window picker; Omasnap never substitutes a crop of the desktop.
-- Select/move/resize layers, mouse-wheel scaling, and eight external recropping handles.
-- Arrows, straight lines, smoothed freehand strokes, rectangles, numbered markers, and
-  editable Neucha text.
+- Freeform region, Niri-native window, and full-output capture modes.
+- Clean window capture by Niri window ID, including tiled windows in the
+  scrolling layout without guessing their on-screen geometry.
+- Select/move/resize layers, mouse-wheel scaling, and eight external recropping
+  handles.
+- Arrows, straight lines, smoothed freehand strokes, rectangles, numbered
+  markers, and editable Neucha text.
 - Per-layer preset or custom colors, undo/redo history, OCR-region capture,
   mesh-gradient backdrops, and rendered drop shadows.
-- Crash-resistant working snapshots under `/tmp/omasnap/snapshot-<pid>.png`, written
-  immediately after selection and overwritten after every completed edit. Saving moves
-  that file into `~/Pictures/Screenshots`; clipboard output streams the same PNG.
-- Verified PNG clipboard output through `wl-copy`/`wl-paste`, plus timestamped files
-  under `~/Pictures/Screenshots` by default.
-- Correct native-pixel export on fractional or integer-scaled monitors.
+- Crash-resistant working snapshots under `/tmp/omasnap/snapshot-<pid>.png`,
+  written immediately after selection and overwritten after every completed
+  edit.
+- Verified PNG clipboard output through `wl-copy`/`wl-paste`, plus timestamped
+  files under `~/Pictures/Screenshots` by default.
+- Correct native-pixel export on fractional or integer-scaled outputs.
 
-## Platform scope
+## Niri integration
 
-The supported target is **Wayland + Hyprland**, with Omarchy as the primary integration.
-The renderer, layer surface, clipboard, and clean-window capture use Wayland protocols;
-monitor/window discovery currently calls `hyprctl`. `grim` captures the monitor before
-the layer maps. Selection displays that captured frame, while the annotation editor uses
-a translucent layer scrim over the live desktop and draws only the selected capture.
-Another Wayland compositor could support the application after supplying equivalent
-monitor and window discovery; generic Wayland support is not claimed by 1.0.
+The supported target is **Niri on Wayland**. Monitor, workspace, and window
+selection use `niri msg`; `grim` captures the focused output before the overlay
+maps. The annotation editor is an exclusive layer-shell overlay.
+
+Window mode temporarily hides the editor and starts `niri msg --json
+pick-window`. Once a window is clicked, Omasnap asks Niri to capture that window
+by IPC ID and makes a best-effort restoration of the previous clipboard payload
+before opening the editor. This works with Niri's scrolling layout, where tiled
+window viewport coordinates are intentionally not exposed through IPC.
 
 Runtime commands used by the application:
 
-- `hyprctl`
+- `niri`
 - `grim`
 - `wl-copy` and `wl-paste`
 - `tesseract`
-- `omarchy-notification-send` when available; completed captures include a thumbnail and
-  open through `xdg-open` when clicked. Notification failure does not invalidate output.
+- `notify-send`
 
-## Install on Omarchy
+### Niri binding
 
-Clone the repository and run the Omarchy installer:
+For the screenshot layout used by Jacurutu, replace the existing
+`Shift+Print` annotation binding in `config.kdl` with:
+
+```kdl
+Shift+Print { spawn-sh "OMASNAP_SCREENSHOT_DIR=$HOME/media/screenshots omasnap"; }
+```
+
+Plain `Print`, `Ctrl+Print`, and `Alt+Print` can remain bound to Niri's built-in
+region, output, and focused-window screenshot actions. Omasnap sets up its own
+overlay-layer namespace and does not need a Niri layer rule.
+
+Niri reloads its configuration automatically. Check the installed executable
+and visible layer surface with:
 
 ```bash
-git clone https://github.com/tobi/omasnap.git
-cd omasnap
-./install-omarchy
+omasnap --version
+niri msg --json layers | jq -c '.[] | select(.namespace == "omasnap")'
 ```
 
-The installer uses Omarchy's package helper for missing dependencies, builds in
-`~/.cache/omasnap`, and installs under `~/.local`. It does not modify
-Hyprland configuration.
+The second command prints the layer only while the editor is open.
 
-### Hyprland binding
+## Build and install
 
-Paste this into a Lua config loaded after `require("default.hypr.omarchy")`:
+### NixOS
 
-```lua
-hl.unbind("PRINT")
-hl.unbind("F12")
-hl.unbind("ALT + SHIFT + 4")
-
-o.bind("PRINT", "Screenshot", "omasnap")
-o.bind("F12", "Screenshot", "omasnap")
-o.bind("ALT + SHIFT + 4", "Screenshot", "omasnap")
-
-hl.layer_rule({
-  match = { namespace = "^omasnap$" },
-  no_anim = true,
-  animation = "none",
-})
-```
-
-Apply and verify:
+The checked-in flake pins Nixpkgs and packages the application with Qt's Nix
+wrapper. Install its GC-rooted result under `~/.local`:
 
 ```bash
-hyprctl reload
-hyprctl configerrors
-hyprctl binds -j | jq -c \
-  '[.[] | select(.description == "Screenshot") | {modmask,key,description}]'
+./install-niri
 ```
 
-`omarchy plugin add` is intentionally not used. Omarchy plugins are Quickshell QML
-extensions; they do not install native executables or system packages.
+The installer maintains its Nix result link under
+`~/.local/state/omasnap/result`. Set `OMASNAP_PREFIX` to expose the executable
+and desktop file under another prefix. You can also run it without installing:
 
-Set `OMASNAP_PREFIX` before running `install-omarchy` to use a prefix other than
-`~/.local`.
+```bash
+nix run .
+```
+
+Enter the reproducible development shell with:
+
+```bash
+nix develop
+```
+
+It provides CMake, Ninja, Qt 6, LayerShellQt, clang-format, nixfmt, shellcheck,
+and the runtime tools. Niri itself comes from the active host installation so
+its IPC client stays aligned with the running compositor.
 
 ### Manual Arch Linux build
 
-Install the complete build/runtime dependency set:
+Install the build and runtime dependencies:
 
 ```bash
 sudo pacman -S --needed \
   base-devel cmake ninja pkgconf qt6-base layer-shell-qt \
-  wayland wayland-protocols hyprland grim wl-clipboard \
+  wayland wayland-protocols niri grim wl-clipboard libnotify \
   tesseract tesseract-data-eng
 ```
 
@@ -119,13 +124,6 @@ The install step places:
 - `~/.local/share/applications/omasnap.desktop`
 - `~/.local/share/licenses/omasnap/Neucha-OFL.txt`
 
-Ensure `~/.local/bin` is on `PATH`, then verify the installed CLI:
-
-```bash
-omasnap --version
-omasnap --help
-```
-
 ## CLI capture modes
 
 Running without arguments opens freeform region selection:
@@ -142,7 +140,7 @@ omasnap --capture-window
 omasnap --capture-fullscreen
 ```
 
-Compatibility positional names are also accepted:
+Compatibility positional names remain accepted:
 
 ```bash
 omasnap region
@@ -151,13 +149,13 @@ omasnap fullscreen
 omasnap smart       # maps to region selection
 ```
 
-These options choose what is initially selected; the editor still controls whether the
-result is copied, saved, or both.
+These options choose the initial capture flow; the editor still controls
+whether the final image is copied, saved, or both.
 
 Environment overrides:
 
 ```bash
-OMASNAP_SCREENSHOT_DIR="$HOME/Pictures/Captures" omasnap
+OMASNAP_SCREENSHOT_DIR="$HOME/media/screenshots" omasnap
 OMASNAP_OCR_LANGS="eng+deu" omasnap
 ```
 
@@ -171,10 +169,9 @@ Install the corresponding Tesseract language data before adding a language to
 | Input | Action |
 |---|---|
 | Drag | Select a region |
-| `Space` | Toggle region/window selection |
-| `SUPER + Arrow` | Move among windows in window mode |
-| `Enter` | Capture the highlighted window |
-| `Ctrl+A` | Select the full focused monitor |
+| `Space` | Hide the overlay and open Niri's window picker |
+| Click in Niri picker | Capture that window and open the editor |
+| `Ctrl+A` | Select the full focused output |
 | `Esc`, `Esc` | Dismiss |
 
 ### Annotation editor
@@ -201,47 +198,35 @@ Install the corresponding Tesseract language data before adding a language to
 | `Enter` | Copy and save |
 | `Esc` | Return to Select; press again to close |
 
-Creation tools return to Select after one placement without selecting the new layer. In
-Select mode, arrows and lines show only their two endpoint handles; other layers show a
-selection boundary. The eight blue/white handles outside the image recrop its corners or
-edges.
+Creation tools return to Select after one placement without selecting the new
+layer. In Select mode, arrows and lines show only their two endpoint handles;
+other layers show a selection boundary. The eight blue/white handles outside
+the image recrop its corners or edges.
 
 ## Development and verification
 
 ```bash
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-QT_QPA_PLATFORM=offscreen \
-  ./build/omasnap-smoke /tmp/omasnap-smoke
+nix flake check
 ```
 
-The smoke executable exercises region/window/fullscreen startup modes, capture selection,
-temporary snapshot updates, annotation tools, undo/redo, vector movement and scaling,
-text editing, OCR, native-DPI output, endpoint-only line selection, and external crop
-handles.
+The package build compiles the release target, runs the interaction smoke suite,
+wraps Qt's runtime plugin paths, and starts the installed wrapper on the
+offscreen platform. The smoke executable exercises region/full-output startup
+modes, capture selection, temporary snapshot updates, annotation tools,
+undo/redo, vector movement and scaling, text editing, OCR, native-DPI output,
+endpoint-only line selection, and external crop handles. Niri IPC capture is
+verified separately in a live compositor session.
 
-`.github/workflows/build-linux.yml` performs the same release build and interaction smoke
-in an Arch Linux container, stages the CMake installation, and uploads a versioned Linux
-artifact. A `v*` tag also attaches that artifact to the corresponding GitHub release.
+`.github/workflows/build-linux.yml` performs the same release build and
+interaction smoke in an Arch Linux container, stages the CMake installation,
+and uploads a versioned Linux artifact. A `v*` tag also attaches that artifact
+to the corresponding GitHub release.
 
 ## Acknowledgements
 
-The capture and annotation workflow is inspired by three excellent screenshot tools:
+The capture and annotation workflow is inspired by Shottr, Satty, and
+Flameshot. Omasnap is an independent implementation and is not affiliated with
+those projects.
 
-- [Shottr](https://shottr.cc/) — fast region/window capture, OCR, and polished backdrops.
-- [Satty](https://github.com/Satty-org/Satty) — a focused, Wayland-native annotation workflow.
-- [Flameshot](https://github.com/flameshot-org/flameshot) — selection-first capture and an
-  approachable annotation toolbar.
-
-Thanks to their authors and contributors for establishing the interaction patterns that made
-this project possible. Omasnap is an independent implementation and is not
-affiliated with those projects.
-
-## Project history
-
-This standalone repository was extracted with `git filter-repo` from the original Omarchy
-system-customization repository. The former `omasnap/` directory was promoted to
-the repository root while retaining its relevant commit history.
-
-The bundled Neucha font is distributed under the SIL Open Font License; its license is in
-`assets/OFL.txt` and is installed with the application.
+The bundled Neucha font is distributed under the SIL Open Font License; its
+license is in `assets/OFL.txt` and is installed with the application.

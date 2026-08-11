@@ -24,23 +24,6 @@ int main(int argc, char **argv) {
   QDir(savedRoot).removeRecursively();
   qputenv("OMASNAP_SCREENSHOT_DIR", savedRoot.toUtf8());
 
-  const QString nativeStableId =
-      qEnvironmentVariable("OMASNAP_SMOKE_NATIVE_STABLE_ID");
-  if (!nativeStableId.isEmpty()) {
-    QImage nativeSurface;
-    QString nativeError;
-    if (!captureWindowSurface(
-            {{}, nativeStableId, QStringLiteral("native smoke")}, nativeSurface,
-            nativeError)) {
-      qWarning().noquote() << nativeError;
-      return 10;
-    }
-    if (!nativeSurface.save(outputRoot + QStringLiteral("-native-window.png"),
-                            "PNG"))
-      return 11;
-    return 0;
-  }
-
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");
   capture.monitor.geometry = {0, 0, 800, 600};
@@ -59,29 +42,11 @@ int main(int argc, char **argv) {
                      QStringLiteral("Native Qt capture editor"));
   }
   capture.preview = capture.source;
-  capture.windows = {
-      {{80, 80, 300, 220}, QStringLiteral("1"), QStringLiteral("first")},
-      {{420, 120, 300, 320}, QStringLiteral("2"), QStringLiteral("second")}};
 
   CaptureEditor editor(capture);
   editor.resize(800, 600);
   editor.show();
   application.processEvents();
-  QTest::keyClick(&editor, Qt::Key_Space);
-  QTest::mouseMove(&editor, QPoint(200, 160), 20);
-  application.processEvents();
-  const QImage hoverUi = editor.grab().toImage();
-  if (hoverUi.pixelColor(200, 160) != capture.preview.pixelColor(200, 160))
-    return 7;
-  QTest::keyClick(&editor, Qt::Key_Right, Qt::MetaModifier);
-  application.processEvents();
-  const QImage keyboardWindowUi = editor.grab().toImage();
-  if (keyboardWindowUi.pixelColor(500, 200) !=
-          capture.preview.pixelColor(500, 200) ||
-      keyboardWindowUi.pixelColor(200, 160) ==
-          capture.preview.pixelColor(200, 160))
-    return 8;
-  QTest::keyClick(&editor, Qt::Key_Space);
   QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
   QTest::mouseMove(&editor, QPoint(650, 470), 20);
   QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
@@ -291,10 +256,7 @@ int main(int argc, char **argv) {
   application.processEvents();
   if (editor.cursor().shape() != Qt::PointingHandCursor)
     return 12;
-  if (!editor.grab().save(outputRoot + QStringLiteral("-ui.png"), "PNG") ||
-      !hoverUi.save(outputRoot + QStringLiteral("-window-hover.png"), "PNG") ||
-      !keyboardWindowUi.save(
-          outputRoot + QStringLiteral("-window-keyboard.png"), "PNG"))
+  if (!editor.grab().save(outputRoot + QStringLiteral("-ui.png"), "PNG"))
     return 2;
 
   CaptureEditor fullscreenEditor(capture,
@@ -309,22 +271,6 @@ int main(int argc, char **argv) {
   if (!windowModeEditor.grab().save(
           outputRoot + QStringLiteral("-window-mode.png"), "PNG"))
     return 36;
-
-  CaptureData failedWindowCapture = capture;
-  failedWindowCapture.windows = {{{80, 80, 300, 220},
-                                  QStringLiteral("missing-stable-id"),
-                                  QStringLiteral("missing")}};
-  CaptureEditor failedWindowEditor(failedWindowCapture,
-                                   CaptureEditor::CaptureMode::Window);
-  failedWindowEditor.resize(800, 600);
-  failedWindowEditor.show();
-  QTest::mouseMove(&failedWindowEditor, QPoint(200, 160), 20);
-  QTest::keyClick(&failedWindowEditor, Qt::Key_Return);
-  application.processEvents();
-  if (failedWindowEditor.cursor().shape() != Qt::PointingHandCursor ||
-      !failedWindowEditor.grab().save(
-          outputRoot + QStringLiteral("-window-capture-failed.png"), "PNG"))
-    return 63;
 
   CaptureData nativePreviewCapture = capture;
   nativePreviewCapture.monitor.scale = 2.0;

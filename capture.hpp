@@ -15,20 +15,13 @@ struct MonitorInfo {
   QRect geometry;
   QSize pixelSize;
   qreal scale = 1.0;
-  int workspaceId = 0;
-};
-
-struct WindowTarget {
-  QRect rect;
-  QString stableId;
-  QString title;
+  qint64 workspaceId = -1;
 };
 
 struct CaptureData {
   MonitorInfo monitor;
   QImage source;
   QImage preview;
-  QVector<WindowTarget> windows;
 };
 
 enum class BackgroundStyle { None, Aurora, Sunset, Lagoon, Violet };
@@ -49,8 +42,7 @@ struct Annotation {
 [[nodiscard]] bool loadCaptureFonts();
 [[nodiscard]] QFont annotationTextFont(qreal size);
 [[nodiscard]] bool captureFocusedMonitor(CaptureData &capture, QString &error);
-[[nodiscard]] bool captureWindowSurface(const WindowTarget &window,
-                                        QImage &image, QString &error);
+[[nodiscard]] bool captureSelectedWindow(CaptureData &capture, QString &error);
 [[nodiscard]] QImage renderCapture(const CaptureData &capture,
                                    const QRectF &selection,
                                    const QVector<Annotation> &annotations,

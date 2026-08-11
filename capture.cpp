@@ -2,7 +2,9 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -15,8 +17,8 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryFile>
+#include <QThread>
 
-#include <QUrl>
 #include <algorithm>
 #include <cmath>
 
@@ -43,6 +45,13 @@ struct ProcessResult {
   bool finished = false;
 };
 
+struct ClipboardSnapshot {
+  QByteArray payload;
+  QString mimeType;
+  bool wasEmpty = false;
+  bool valid = false;
+};
+
 ProcessResult runProcess(const QString &program, const QStringList &arguments,
                          const QByteArray &input = {}, int timeoutMs = 10000) {
   QProcess process;
@@ -59,6 +68,93 @@ ProcessResult runProcess(const QString &program, const QStringList &arguments,
     process.kill();
   return {process.readAllStandardOutput(), process.readAllStandardError(),
           finished ? process.exitCode() : -1, finished};
+}
+
+QString processFailure(const ProcessResult &result) {
+  const QString stderrText = QString::fromUtf8(result.error).trimmed();
+  return stderrText.isEmpty() ? QStringLiteral("command did not complete")
+                              : stderrText;
+}
+
+ClipboardSnapshot snapshotClipboard() {
+  const ProcessResult listed = runProcess(
+      QStringLiteral("wl-paste"), {QStringLiteral("--list-types")}, {}, 2000);
+  if (listed.finished && listed.exitCode != 0) {
+    ClipboardSnapshot snapshot;
+    snapshot.wasEmpty = true;
+    snapshot.valid = true;
+    return snapshot;
+  }
+  if (!listed.finished)
+    return {};
+
+  const QStringList types =
+      QString::fromUtf8(listed.output).split('\n', Qt::SkipEmptyParts);
+  if (types.isEmpty()) {
+    ClipboardSnapshot snapshot;
+    snapshot.wasEmpty = true;
+    snapshot.valid = true;
+    return snapshot;
+  }
+
+  static const QStringList preferredTypes{
+      QStringLiteral("image/png"),
+      QStringLiteral("text/plain;charset=utf-8"),
+      QStringLiteral("text/plain"),
+      QStringLiteral("UTF8_STRING"),
+  };
+  QString mimeType;
+  for (const QString &preferred : preferredTypes) {
+    if (types.contains(preferred)) {
+      mimeType = preferred;
+      break;
+    }
+  }
+  if (mimeType.isEmpty())
+    mimeType = types.first();
+
+  const ProcessResult pasted = runProcess(
+      QStringLiteral("wl-paste"),
+      {QStringLiteral("--no-newline"), QStringLiteral("--type"), mimeType}, {},
+      5000);
+  if (!pasted.finished || pasted.exitCode != 0)
+    return {};
+  return {
+      .payload = pasted.output, .mimeType = std::move(mimeType), .valid = true};
+}
+
+bool restoreClipboard(const ClipboardSnapshot &snapshot, QString &error) {
+  if (!snapshot.valid)
+    return true;
+  const ProcessResult restored =
+      snapshot.wasEmpty
+          ? runProcess(QStringLiteral("wl-copy"), {QStringLiteral("--clear")},
+                       {}, 5000)
+          : runProcess(QStringLiteral("wl-copy"),
+                       {QStringLiteral("--type"), snapshot.mimeType},
+                       snapshot.payload, 5000);
+  if (restored.finished && restored.exitCode == 0)
+    return true;
+  error = QStringLiteral("Could not restore clipboard after window capture: %1")
+              .arg(processFailure(restored));
+  return false;
+}
+
+void waitForClipboardImage(const QByteArray &png) {
+  if (png.isEmpty())
+    return;
+  QElapsedTimer timer;
+  timer.start();
+  while (timer.elapsed() < 2000) {
+    const ProcessResult pasted =
+        runProcess(QStringLiteral("wl-paste"),
+                   {QStringLiteral("--no-newline"), QStringLiteral("--type"),
+                    QStringLiteral("image/png")},
+                   {}, 500);
+    if (pasted.finished && pasted.exitCode == 0 && pasted.output == png)
+      return;
+    QThread::msleep(20);
+  }
 }
 
 bool copyToWaylandClipboard(const QString &mimeType, const QByteArray &payload,
@@ -119,84 +215,158 @@ QString screenshotTargetPath(QString &error) {
   return path;
 }
 
-bool parseMonitor(const QByteArray &json, MonitorInfo &monitor,
-                  QString &error) {
+bool parseMonitorObject(const QJsonObject &object, qint64 workspaceId,
+                        MonitorInfo &monitor, QString &error) {
+  const QJsonObject logical =
+      object.value(QStringLiteral("logical")).toObject();
+  const QString name = object.value(QStringLiteral("name")).toString();
+  const int width = logical.value(QStringLiteral("width")).toInt();
+  const int height = logical.value(QStringLiteral("height")).toInt();
+  const qreal scale = logical.value(QStringLiteral("scale")).toDouble(1.0);
+  if (name.isEmpty() || width <= 0 || height <= 0 || scale <= 0) {
+    error = QStringLiteral("Niri reported an invalid logical output");
+    return false;
+  }
+
+  monitor.name = name;
+  monitor.geometry = {logical.value(QStringLiteral("x")).toInt(),
+                      logical.value(QStringLiteral("y")).toInt(), width,
+                      height};
+  monitor.pixelSize = {std::max(1, qRound(width * scale)),
+                       std::max(1, qRound(height * scale))};
+  monitor.scale = scale;
+  monitor.workspaceId = workspaceId;
+  return true;
+}
+
+bool focusedWorkspaceId(const QByteArray &json, const QString &outputName,
+                        qint64 &workspaceId, QString &error) {
   QJsonParseError parseError;
   const QJsonDocument document = QJsonDocument::fromJson(json, &parseError);
   if (parseError.error != QJsonParseError::NoError || !document.isArray()) {
-    error = QStringLiteral("Could not parse Hyprland monitors: %1")
+    error = QStringLiteral("Could not parse Niri workspaces: %1")
                 .arg(parseError.errorString());
     return false;
   }
 
   for (const QJsonValue value : document.array()) {
     const QJsonObject object = value.toObject();
-    if (!object.value(QStringLiteral("focused")).toBool())
+    if (object.value(QStringLiteral("output")).toString() != outputName ||
+        !object.value(QStringLiteral("is_focused")).toBool())
       continue;
-
-    const qreal scale = object.value(QStringLiteral("scale")).toDouble(1.0);
-    const int rawWidth = object.value(QStringLiteral("width")).toInt();
-    const int rawHeight = object.value(QStringLiteral("height")).toInt();
-    const int transform = object.value(QStringLiteral("transform")).toInt();
-    int logicalWidth =
-        static_cast<int>(std::floor(rawWidth / std::max<qreal>(scale, 0.01)));
-    int logicalHeight =
-        static_cast<int>(std::floor(rawHeight / std::max<qreal>(scale, 0.01)));
-    if (transform == 1 || transform == 3)
-      std::swap(logicalWidth, logicalHeight);
-
-    monitor.name = object.value(QStringLiteral("name")).toString();
-    monitor.geometry = {object.value(QStringLiteral("x")).toInt(),
-                        object.value(QStringLiteral("y")).toInt(), logicalWidth,
-                        logicalHeight};
-    monitor.pixelSize = {rawWidth, rawHeight};
-    monitor.scale = scale;
-    monitor.workspaceId = object.value(QStringLiteral("activeWorkspace"))
-                              .toObject()
-                              .value(QStringLiteral("id"))
-                              .toInt();
-    return !monitor.name.isEmpty() && logicalWidth > 0 && logicalHeight > 0;
+    workspaceId = object.value(QStringLiteral("id")).toInteger(-1);
+    return workspaceId >= 0;
   }
-
-  error = QStringLiteral("Hyprland did not report a focused monitor");
-  return false;
-}
-
-QVector<WindowTarget> parseWindows(const QByteArray &json,
-                                   const MonitorInfo &monitor) {
-  QVector<WindowTarget> result;
-  const QJsonDocument document = QJsonDocument::fromJson(json);
-  if (!document.isArray())
-    return result;
 
   for (const QJsonValue value : document.array()) {
     const QJsonObject object = value.toObject();
-    if (object.value(QStringLiteral("workspace"))
-            .toObject()
-            .value(QStringLiteral("id"))
-            .toInt() != monitor.workspaceId)
+    if (object.value(QStringLiteral("output")).toString() != outputName ||
+        !object.value(QStringLiteral("is_active")).toBool())
       continue;
-
-    const QJsonArray at = object.value(QStringLiteral("at")).toArray();
-    const QJsonArray size = object.value(QStringLiteral("size")).toArray();
-    if (at.size() < 2 || size.size() < 2)
-      continue;
-
-    QRect rect(at.at(0).toInt() - monitor.geometry.x(),
-               at.at(1).toInt() - monitor.geometry.y(), size.at(0).toInt(),
-               size.at(1).toInt());
-    rect = rect.intersected(QRect(QPoint(), monitor.geometry.size()));
-    if (rect.isEmpty())
-      continue;
-
-    QString title = object.value(QStringLiteral("title")).toString();
-    if (title.isEmpty())
-      title = object.value(QStringLiteral("class"))
-                  .toString(QStringLiteral("window"));
-    result.push_back({rect, object.value(QStringLiteral("stableId")).toString(),
-                      std::move(title)});
+    workspaceId = object.value(QStringLiteral("id")).toInteger(-1);
+    return workspaceId >= 0;
   }
-  return result;
+
+  error = QStringLiteral("Niri did not report an active workspace on %1")
+              .arg(outputName);
+  return false;
+}
+
+bool parseFocusedMonitor(const QByteArray &outputJson,
+                         const QByteArray &workspacesJson, MonitorInfo &monitor,
+                         QString &error) {
+  QJsonParseError parseError;
+  const QJsonDocument document =
+      QJsonDocument::fromJson(outputJson, &parseError);
+  if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+    error = QStringLiteral("Could not parse Niri focused output: %1")
+                .arg(parseError.errorString());
+    return false;
+  }
+
+  const QJsonObject output = document.object();
+  qint64 workspaceId = -1;
+  if (!focusedWorkspaceId(workspacesJson,
+                          output.value(QStringLiteral("name")).toString(),
+                          workspaceId, error))
+    return false;
+  return parseMonitorObject(output, workspaceId, monitor, error);
+}
+
+bool parsePickedWindow(const QByteArray &json, QString &windowId,
+                       qint64 &workspaceId, QString &error) {
+  if (json.trimmed() == QByteArrayLiteral("null")) {
+    error = QStringLiteral("Window selection was cancelled");
+    return false;
+  }
+  QJsonParseError parseError;
+  const QJsonDocument document = QJsonDocument::fromJson(json, &parseError);
+  if (parseError.error != QJsonParseError::NoError) {
+    error = QStringLiteral("Could not parse Niri window selection: %1")
+                .arg(parseError.errorString());
+    return false;
+  }
+  if (!document.isObject()) {
+    error = QStringLiteral("Niri returned an invalid window selection");
+    return false;
+  }
+
+  const QJsonObject object = document.object();
+  const qint64 id = object.value(QStringLiteral("id")).toInteger(-1);
+  workspaceId = object.value(QStringLiteral("workspace_id")).toInteger(-1);
+  if (id < 0 || workspaceId < 0) {
+    error = QStringLiteral("Niri returned incomplete window information");
+    return false;
+  }
+
+  windowId = QString::number(id);
+  return true;
+}
+
+bool parseMonitorForWorkspace(const QByteArray &outputsJson,
+                              const QByteArray &workspacesJson,
+                              qint64 workspaceId, MonitorInfo &monitor,
+                              QString &error) {
+  QJsonParseError workspaceParseError;
+  const QJsonDocument workspaces =
+      QJsonDocument::fromJson(workspacesJson, &workspaceParseError);
+  if (workspaceParseError.error != QJsonParseError::NoError ||
+      !workspaces.isArray()) {
+    error = QStringLiteral("Could not parse Niri workspaces: %1")
+                .arg(workspaceParseError.errorString());
+    return false;
+  }
+
+  QString outputName;
+  for (const QJsonValue value : workspaces.array()) {
+    const QJsonObject workspace = value.toObject();
+    if (workspace.value(QStringLiteral("id")).toInteger(-1) == workspaceId) {
+      outputName = workspace.value(QStringLiteral("output")).toString();
+      break;
+    }
+  }
+  if (outputName.isEmpty()) {
+    error = QStringLiteral("Selected window is not on a Niri output");
+    return false;
+  }
+
+  QJsonParseError outputParseError;
+  const QJsonDocument outputs =
+      QJsonDocument::fromJson(outputsJson, &outputParseError);
+  if (outputParseError.error != QJsonParseError::NoError ||
+      !outputs.isObject()) {
+    error = QStringLiteral("Could not parse Niri outputs: %1")
+                .arg(outputParseError.errorString());
+    return false;
+  }
+  QJsonObject output = outputs.object().value(outputName).toObject();
+  if (output.isEmpty()) {
+    error = QStringLiteral("Niri output disappeared during window selection");
+    return false;
+  }
+  if (!output.contains(QStringLiteral("name")))
+    output.insert(QStringLiteral("name"), outputName);
+  return parseMonitorObject(output, workspaceId, monitor, error);
 }
 
 void drawAnnotation(QPainter &painter, const Annotation &annotation) {
@@ -377,15 +547,25 @@ void paintCaptureBackground(QPainter &painter, const QRectF &bounds,
 }
 
 bool captureFocusedMonitor(CaptureData &capture, QString &error) {
-  const ProcessResult monitors =
-      runProcess(QStringLiteral("hyprctl"),
-                 {QStringLiteral("monitors"), QStringLiteral("-j")});
-  if (!monitors.finished || monitors.exitCode != 0 ||
-      !parseMonitor(monitors.output, capture.monitor, error)) {
-    if (error.isEmpty())
-      error = QString::fromUtf8(monitors.error).trimmed();
+  const ProcessResult output = runProcess(
+      QStringLiteral("niri"), {QStringLiteral("msg"), QStringLiteral("--json"),
+                               QStringLiteral("focused-output")});
+  if (!output.finished || output.exitCode != 0) {
+    error = QStringLiteral("Could not query the focused Niri output: %1")
+                .arg(processFailure(output));
     return false;
   }
+  const ProcessResult workspaces = runProcess(
+      QStringLiteral("niri"), {QStringLiteral("msg"), QStringLiteral("--json"),
+                               QStringLiteral("workspaces")});
+  if (!workspaces.finished || workspaces.exitCode != 0) {
+    error = QStringLiteral("Could not query Niri workspaces: %1")
+                .arg(processFailure(workspaces));
+    return false;
+  }
+  if (!parseFocusedMonitor(output.output, workspaces.output, capture.monitor,
+                           error))
+    return false;
 
   QTemporaryFile sourceFile(
       runtimePath(QStringLiteral("omasnap-capture-XXXXXX.ppm")));
@@ -398,16 +578,11 @@ bool captureFocusedMonitor(CaptureData &capture, QString &error) {
   sourceFile.close();
 
   const QRect geometry = capture.monitor.geometry;
-  const QString grimGeometry = QStringLiteral("%1,%2 %3x%4")
-                                   .arg(geometry.x())
-                                   .arg(geometry.y())
-                                   .arg(geometry.width())
-                                   .arg(geometry.height());
   const ProcessResult grim = runProcess(
       QStringLiteral("grim"),
       {QStringLiteral("-t"), QStringLiteral("ppm"), QStringLiteral("-s"),
-       QString::number(capture.monitor.scale, 'g', 8), QStringLiteral("-g"),
-       grimGeometry, sourcePath},
+       QString::number(capture.monitor.scale, 'g', 8), QStringLiteral("-o"),
+       capture.monitor.name, sourcePath},
       {}, 10000);
 
   if (!grim.finished || grim.exitCode != 0 ||
@@ -423,12 +598,114 @@ bool captureFocusedMonitor(CaptureData &capture, QString &error) {
     error = QStringLiteral("Could not prepare screenshot preview");
     return false;
   }
+  return true;
+}
 
-  const ProcessResult clients =
-      runProcess(QStringLiteral("hyprctl"),
-                 {QStringLiteral("clients"), QStringLiteral("-j")});
-  if (clients.finished && clients.exitCode == 0)
-    capture.windows = parseWindows(clients.output, capture.monitor);
+bool captureSelectedWindow(CaptureData &capture, QString &error) {
+  const ProcessResult picked =
+      runProcess(QStringLiteral("niri"),
+                 {QStringLiteral("msg"), QStringLiteral("--json"),
+                  QStringLiteral("pick-window")},
+                 {}, 300000);
+  if (!picked.finished || picked.exitCode != 0) {
+    error = QStringLiteral("Niri window selection failed: %1")
+                .arg(processFailure(picked));
+    return false;
+  }
+
+  QString windowId;
+  qint64 workspaceId = -1;
+  if (!parsePickedWindow(picked.output, windowId, workspaceId, error))
+    return false;
+
+  const ProcessResult outputs = runProcess(
+      QStringLiteral("niri"), {QStringLiteral("msg"), QStringLiteral("--json"),
+                               QStringLiteral("outputs")});
+  const ProcessResult workspaces = runProcess(
+      QStringLiteral("niri"), {QStringLiteral("msg"), QStringLiteral("--json"),
+                               QStringLiteral("workspaces")});
+  if (!outputs.finished || outputs.exitCode != 0) {
+    error = QStringLiteral("Could not query Niri outputs: %1")
+                .arg(processFailure(outputs));
+    return false;
+  }
+  if (!workspaces.finished || workspaces.exitCode != 0) {
+    error = QStringLiteral("Could not query Niri workspaces: %1")
+                .arg(processFailure(workspaces));
+    return false;
+  }
+
+  MonitorInfo monitor;
+  if (!parseMonitorForWorkspace(outputs.output, workspaces.output, workspaceId,
+                                monitor, error))
+    return false;
+
+  QTemporaryFile targetFile(
+      runtimePath(QStringLiteral("omasnap-window-XXXXXX.png")));
+  targetFile.setAutoRemove(true);
+  if (!targetFile.open()) {
+    error = targetFile.errorString();
+    return false;
+  }
+  const QString targetPath = targetFile.fileName();
+  targetFile.close();
+  if (!QFile::remove(targetPath)) {
+    error = QStringLiteral("Could not prepare native window capture path");
+    return false;
+  }
+
+  const ClipboardSnapshot clipboard = snapshotClipboard();
+  const ProcessResult screenshot =
+      runProcess(QStringLiteral("niri"),
+                 {QStringLiteral("msg"), QStringLiteral("action"),
+                  QStringLiteral("screenshot-window"), QStringLiteral("--id"),
+                  windowId, QStringLiteral("--path"), targetPath},
+                 {}, 10000);
+  if (!screenshot.finished || screenshot.exitCode != 0) {
+    QString restoreError;
+    if (!restoreClipboard(clipboard, restoreError))
+      qWarning().noquote() << restoreError;
+    error = QStringLiteral("Niri window capture failed: %1")
+                .arg(processFailure(screenshot));
+    return false;
+  }
+
+  QImage image;
+  QElapsedTimer timer;
+  timer.start();
+  while (timer.elapsed() < 5000) {
+    if (image.load(targetPath))
+      break;
+    QThread::msleep(20);
+  }
+
+  QFile pngFile(targetPath);
+  QByteArray png;
+  if (pngFile.open(QIODevice::ReadOnly))
+    png = pngFile.readAll();
+  if (clipboard.valid)
+    waitForClipboardImage(png);
+  QString restoreError;
+  if (!restoreClipboard(clipboard, restoreError))
+    qWarning().noquote() << restoreError;
+
+  if (image.isNull()) {
+    error = QStringLiteral("Timed out waiting for Niri window capture");
+    return false;
+  }
+
+  const QSize previewSize{
+      std::max(1, qRound(image.width() / monitor.scale)),
+      std::max(1, qRound(image.height() / monitor.scale)),
+  };
+  capture.monitor = std::move(monitor);
+  capture.source = std::move(image);
+  capture.preview = capture.source.scaled(previewSize, Qt::IgnoreAspectRatio,
+                                          Qt::SmoothTransformation);
+  if (capture.preview.isNull()) {
+    error = QStringLiteral("Could not prepare native window preview");
+    return false;
+  }
   return true;
 }
 
@@ -607,17 +884,14 @@ QString recognizeText(const QImage &image, QString &error) {
 }
 
 void sendCaptureNotification(const QString &message, const QString &imagePath) {
-  QStringList arguments{QStringLiteral("-g"), QStringLiteral(""),
-                        QStringLiteral("--app-name"), QStringLiteral("omasnap"),
+  QStringList arguments{QStringLiteral("--app-name"),
+                        QStringLiteral("omasnap"),
+                        QStringLiteral("--expire-time"),
+                        QStringLiteral("4500"),
+                        QStringLiteral("--icon"),
+                        imagePath.isEmpty() ? QStringLiteral("camera-photo")
+                                            : imagePath,
+                        QStringLiteral("Omasnap"),
                         message};
-  if (!imagePath.isEmpty()) {
-    const QString imageUrl =
-        QUrl::fromLocalFile(imagePath).toString(QUrl::FullyEncoded);
-    arguments << QStringLiteral("Click to open") << QStringLiteral("--image")
-              << imagePath << QStringLiteral("--exec")
-              << QStringLiteral("xdg-open %1").arg(imageUrl);
-  }
-  arguments << QStringLiteral("-t") << QStringLiteral("4500");
-  QProcess::startDetached(QStringLiteral("omarchy-notification-send"),
-                          arguments);
+  QProcess::startDetached(QStringLiteral("notify-send"), arguments);
 }

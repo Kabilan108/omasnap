@@ -10,27 +10,25 @@
 #include <QLockFile>
 #include <QScreen>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QWindow>
 
 int main(int argc, char **argv) {
-  QCoreApplication::setApplicationName(
-      QStringLiteral("omasnap"));
-  QCoreApplication::setApplicationVersion(
-      QString::fromLatin1(OMASNAP_VERSION));
-  QCoreApplication::setOrganizationName(QStringLiteral("Omarchy"));
+  QCoreApplication::setApplicationName(QStringLiteral("omasnap"));
+  QCoreApplication::setApplicationVersion(QString::fromLatin1(OMASNAP_VERSION));
+  QCoreApplication::setOrganizationName(QStringLiteral("Omasnap"));
   qputenv("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell");
   QGuiApplication::setDesktopFileName(QStringLiteral("omasnap"));
   QApplication application(argc, argv);
 
   QCommandLineParser parser;
   parser.setApplicationDescription(
-      QStringLiteral("Native Wayland screenshot and annotation overlay for "
-                     "Hyprland and Omarchy."));
+      QStringLiteral("Native Niri screenshot and annotation overlay."));
   parser.addHelpOption();
   parser.addVersionOption();
   const QCommandLineOption fullscreenOption(
       QStringLiteral("capture-fullscreen"),
-      QStringLiteral("Start with the entire focused monitor selected."));
+      QStringLiteral("Start with the entire focused output selected."));
   const QCommandLineOption windowOption(
       {QStringLiteral("capture-window"), QStringLiteral("capture-windows")},
       QStringLiteral("Start in window selection mode."));
@@ -89,8 +87,8 @@ int main(int argc, char **argv) {
       QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
   if (runtime.isEmpty())
     runtime = QDir::tempPath();
-  QLockFile instanceLock(QDir(runtime).filePath(
-      QStringLiteral("omasnap.instance")));
+  QLockFile instanceLock(
+      QDir(runtime).filePath(QStringLiteral("omasnap.instance")));
   instanceLock.setStaleLockTime(0);
   if (!instanceLock.tryLock(0))
     return 0;
@@ -103,11 +101,9 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  qInfo().noquote()
-      << QStringLiteral("Captured %1 workspace %2 with %3 selectable windows")
-             .arg(capture.monitor.name)
-             .arg(capture.monitor.workspaceId)
-             .arg(capture.windows.size());
+  qInfo().noquote() << QStringLiteral("Captured %1 workspace %2")
+                           .arg(capture.monitor.name)
+                           .arg(capture.monitor.workspaceId);
 
   QScreen *targetScreen = QGuiApplication::primaryScreen();
   for (QScreen *screen : QGuiApplication::screens()) {
@@ -122,8 +118,12 @@ int main(int argc, char **argv) {
   editor.setGeometry(targetScreen->geometry());
   editor.winId();
   QWindow *window = editor.windowHandle();
+  if (!window) {
+    qCritical() << "Could not create capture overlay window";
+    return 1;
+  }
   LayerShellQt::Window *layerWindow = LayerShellQt::Window::get(window);
-  if (!window || !layerWindow) {
+  if (!layerWindow) {
     qCritical() << "Could not create capture overlay layer";
     return 1;
   }
@@ -142,6 +142,9 @@ int main(int argc, char **argv) {
   layerWindow->setActivateOnShow(true);
   editor.show();
   editor.setFocus(Qt::ActiveWindowFocusReason);
+  if (captureMode == CaptureEditor::CaptureMode::Window) {
+    QTimer::singleShot(0, &editor, &CaptureEditor::selectNiriWindow);
+  }
 
   return application.exec();
 }

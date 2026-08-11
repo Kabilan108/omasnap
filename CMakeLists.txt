@@ -1,39 +1,14 @@
 cmake_minimum_required(VERSION 3.24)
-project(omasnap VERSION 1.0.6 LANGUAGES C CXX)
+project(omasnap VERSION 1.0.6 LANGUAGES CXX)
 include(GNUInstallDirs)
 
-find_package(PkgConfig REQUIRED)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Concurrent Core Gui Test Widgets)
 find_package(LayerShellQt REQUIRED)
-pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
-find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
-
-set(PROTOCOL_XMLS
-  /usr/share/wayland-protocols/staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml
-  /usr/share/wayland-protocols/staging/ext-image-capture-source/ext-image-capture-source-v1.xml
-  /usr/share/wayland-protocols/staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml
-)
-set(PROTOCOL_SOURCES)
-foreach(PROTOCOL_XML IN LISTS PROTOCOL_XMLS)
-  get_filename_component(PROTOCOL_NAME "${PROTOCOL_XML}" NAME_WE)
-  set(PROTOCOL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/${PROTOCOL_NAME}-client-protocol.h")
-  set(PROTOCOL_CODE "${CMAKE_CURRENT_BINARY_DIR}/${PROTOCOL_NAME}-protocol.c")
-  add_custom_command(
-    OUTPUT "${PROTOCOL_HEADER}" "${PROTOCOL_CODE}"
-    COMMAND "${WAYLAND_SCANNER}" client-header "${PROTOCOL_XML}" "${PROTOCOL_HEADER}"
-    COMMAND "${WAYLAND_SCANNER}" private-code "${PROTOCOL_XML}" "${PROTOCOL_CODE}"
-    DEPENDS "${PROTOCOL_XML}"
-    VERBATIM
-  )
-  list(APPEND PROTOCOL_SOURCES "${PROTOCOL_HEADER}" "${PROTOCOL_CODE}")
-endforeach()
 
 qt_add_executable(omasnap
   main.cpp
   capture.cpp
   capture.hpp
-  surface-capture.cpp
-  ${PROTOCOL_SOURCES}
   editor.cpp
   editor.hpp
 )
@@ -49,21 +24,21 @@ target_compile_options(omasnap PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(omasnap PRIVATE
   OMASNAP_VERSION="${PROJECT_VERSION}"
 )
+set_target_properties(omasnap PROPERTIES
+  INSTALL_RPATH_USE_LINK_PATH TRUE
+)
 target_link_libraries(omasnap PRIVATE
   Qt6::Concurrent
   Qt6::Core
   Qt6::Gui
   Qt6::Widgets
   LayerShellQt::Interface
-  PkgConfig::WaylandClient
 )
 
 qt_add_executable(omasnap-smoke
   editor-smoke.cpp
   capture.cpp
   capture.hpp
-  surface-capture.cpp
-  ${PROTOCOL_SOURCES}
   editor.cpp
   editor.hpp
 )
@@ -81,7 +56,7 @@ target_link_libraries(omasnap-smoke PRIVATE
   Qt6::Gui
   Qt6::Test
   Qt6::Widgets
-  PkgConfig::WaylandClient
+  LayerShellQt::Interface
 )
 
 install(TARGETS omasnap

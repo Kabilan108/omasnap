@@ -20,6 +20,7 @@ public:
   explicit CaptureEditor(CaptureData capture,
                          CaptureMode mode = CaptureMode::Region,
                          QWidget *parent = nullptr);
+  void selectNiriWindow();
 
 protected:
   bool eventFilter(QObject *watched, QEvent *event) override;
@@ -95,8 +96,6 @@ private:
   [[nodiscard]] qreal editScale() const;
   [[nodiscard]] QPointF toAnnotationPoint(const QPointF &position) const;
   [[nodiscard]] QRectF sourceRect(const QRectF &logicalRect) const;
-  [[nodiscard]] int windowAt(const QPointF &position) const;
-  [[nodiscard]] int windowInDirection(int current, int key) const;
   [[nodiscard]] QVector<ToolbarButton> toolbarButtons() const;
   [[nodiscard]] QColor annotationColor() const;
 
@@ -105,14 +104,12 @@ private:
   void applyEditState(const EditState &state);
   void cancelActiveDragForHistory();
   void beginText(const QPointF &point, int annotationIndex = -1);
-  void chooseWindow(int index);
   [[nodiscard]] EditState editState() const;
   void enterEdit(QString status);
   void persistSnapshot();
   void pushUndoState(const EditState &state);
   void recordEdit();
   void redoEdit();
-  void selectWindowInDirection(int key);
   void finish(OutputMode mode);
   void handleEscape();
   void handleToolbar(const QString &action);
@@ -135,13 +132,11 @@ private:
   bool dragging_ = false;
   Interaction interaction_ = Interaction::None;
   QVector<QPointF> freehandPoints_;
-  bool windowMode_ = false;
   BackgroundStyle backgroundStyle_ = BackgroundStyle::None;
   bool busy_ = false;
   bool colorPaletteOpen_ = false;
   bool customColorPickerOpen_ = false;
   bool usingCustomColor_ = false;
-  int hoveredWindow_ = -1;
   int colorIndex_ = 0;
   QColor customColor_ = QColor(QStringLiteral("#ff375f"));
   qreal customHue_ = 0.98;
@@ -159,7 +154,7 @@ private:
   bool dragChanged_ = false;
   QString snapshotPath_;
   QString status_ =
-      QStringLiteral("Drag to select an area · Space selects a window");
+      QStringLiteral("Drag to select an area · Space opens Niri window picker");
   QLineEdit *textEditor_ = nullptr;
   QPointF textPoint_;
   QElapsedTimer escapeTimer_;
