@@ -7,13 +7,156 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QPainter>
+#include <QTemporaryDir>
 #include <QWheelEvent>
 #include <QtTest/QTest>
+
+#include <algorithm>
+
+namespace {
+bool runTemporarySnapshotChecks(QString &error) {
+  const QString path = temporarySnapshotPath();
+  QImage firstImage(64, 64, QImage::Format_ARGB32_Premultiplied);
+  firstImage.fill(QColor(QStringLiteral("#123456")));
+  const auto reload = [](const QString &file) {
+    return QImage(file).convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  };
+  if (!saveTemporarySnapshot(firstImage, path, error) ||
+      reload(path) != firstImage || reload(path).isNull()) {
+    if (error.isEmpty())
+      error = QStringLiteral("Snapshot reload did not match the saved image");
+    return false;
+  }
+
+  QImage secondImage(64, 64, QImage::Format_ARGB32_Premultiplied);
+  secondImage.fill(QColor(QStringLiteral("#654321")));
+  if (!saveTemporarySnapshot(secondImage, path, error))
+    return false;
+  if (reload(path) != secondImage) {
+    error = QStringLiteral("Overwritten snapshot did not replace the first");
+    return false;
+  }
+
+  const QFileInfo fileInfo(path);
+  const QFileInfo dirInfo(fileInfo.absolutePath());
+  const QFileDevice::Permissions owner =
+      QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
+  const QFileDevice::Permissions shared =
+      QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup |
+      QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther;
+  if ((dirInfo.permissions() & owner) != owner ||
+      (dirInfo.permissions() & shared) != 0 ||
+      (fileInfo.permissions() & shared) != 0) {
+    error = QStringLiteral("Runtime or snapshot permissions were not private");
+    return false;
+  }
+
+  QTemporaryDir securityRoot;
+  const QString repairPath =
+      QDir(securityRoot.path()).filePath(QStringLiteral("repair-me"));
+  if (!securityRoot.isValid() || !QDir().mkdir(repairPath) ||
+      !QFile::setPermissions(repairPath, owner | shared) ||
+      !ensurePrivateDirectory(repairPath) ||
+      (QFileInfo(repairPath).permissions() & shared) != 0) {
+    error = QStringLiteral("Private directory permissions were not repaired");
+    return false;
+  }
+  const QString symlinkPath =
+      QDir(securityRoot.path()).filePath(QStringLiteral("directory-link"));
+  if (!QFile::link(repairPath, symlinkPath) ||
+      ensurePrivateDirectory(symlinkPath)) {
+    error = QStringLiteral("Private directory accepted a symbolic link");
+    return false;
+  }
+
+  const QString outsideDirectory =
+      QDir(securityRoot.path()).filePath(QStringLiteral("outside"));
+  const QFileDevice::Permissions visibleToGroup =
+      QFileDevice::ReadGroup | QFileDevice::ExeGroup;
+  if (!QDir().mkdir(outsideDirectory) ||
+      !QFile::setPermissions(outsideDirectory, owner | visibleToGroup)) {
+    error = QStringLiteral("Could not prepare snapshot boundary check");
+    return false;
+  }
+  error.clear();
+  const QString outsideSnapshot =
+      QDir(outsideDirectory).filePath(QStringLiteral("snapshot.png"));
+  if (saveTemporarySnapshot(secondImage, outsideSnapshot, error) ||
+      QFile::exists(outsideSnapshot) ||
+      (QFileInfo(outsideDirectory).permissions() & visibleToGroup) !=
+          visibleToGroup) {
+    error = QStringLiteral("Temporary snapshot escaped its private directory");
+    return false;
+  }
+  QFile::remove(path);
+  return true;
+}
+
+bool runHighlighterRenderingCheck(QString &error) {
+  CaptureData capture;
+  capture.monitor.scale = 1.0;
+  capture.monitor.pixelSize = {200, 100};
+  capture.source = QImage(200, 100, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(Qt::transparent);
+  capture.preview = capture.source;
+
+  Annotation highlight;
+  highlight.kind = Annotation::Kind::Highlighter;
+  highlight.color = QColor(QStringLiteral("#ffd60a"));
+  highlight.size = 4;
+  highlight.points = {{50, 50}, {90, 50}, {130, 50}, {170, 50}};
+  const QImage rendered = renderCapture(capture, QRectF(0, 0, 200, 100),
+                                        {highlight}, BackgroundStyle::None);
+  if (rendered.isNull()) {
+    error = QStringLiteral("Highlighter render was empty");
+    return false;
+  }
+
+  for (const int x : {60, 90, 120, 150}) {
+    const int alpha = rendered.pixelColor(x, 50).alpha();
+    if (alpha < 96 || alpha > 160) {
+      error = QStringLiteral("Highlighter stroke was not translucent");
+      return false;
+    }
+  }
+  for (const int offset : {-5, 5}) {
+    if (rendered.pixelColor(100, 50 + offset).alpha() <= 0) {
+      error = QStringLiteral("Highlighter stroke was not wide enough");
+      return false;
+    }
+  }
+  if (rendered.pixelColor(10, 50).alpha() != 0) {
+    error = QStringLiteral("Highlighter changed pixels outside its stroke");
+    return false;
+  }
+  Annotation crossing = highlight;
+  crossing.points = {{110, 20}, {110, 80}};
+  const QImage overlapped =
+      renderCapture(capture, QRectF(0, 0, 200, 100), {highlight, crossing},
+                    BackgroundStyle::None);
+  if (overlapped.pixelColor(110, 50).alpha() <=
+          rendered.pixelColor(110, 50).alpha() ||
+      overlapped.pixelColor(110, 50).alpha() >= 255) {
+    error = QStringLiteral("Overlapping highlighters did not composite");
+    return false;
+  }
+  return true;
+}
+} // namespace
 
 int main(int argc, char **argv) {
   QApplication application(argc, argv);
   if (!loadCaptureFonts())
     return 17;
+  QString checkError;
+  if (!runTemporarySnapshotChecks(checkError)) {
+    qWarning().noquote() << checkError;
+    return 68;
+  }
+  if (!runHighlighterRenderingCheck(checkError)) {
+    qWarning().noquote() << checkError;
+    return 69;
+  }
   const QString outputRoot =
       argc > 1 ? QString::fromLocal8Bit(argv[1])
                : QDir(QDir::tempPath())
@@ -42,6 +185,20 @@ int main(int argc, char **argv) {
                      QStringLiteral("Native Qt capture editor"));
   }
   capture.preview = capture.source;
+
+  const QString lifecyclePath = temporarySnapshotPath();
+  {
+    CaptureEditor lifecycleEditor(capture,
+                                  CaptureEditor::CaptureMode::Fullscreen);
+    lifecycleEditor.resize(800, 600);
+    lifecycleEditor.show();
+    application.processEvents();
+    if (!QFile::exists(lifecyclePath))
+      return 71;
+  }
+  application.processEvents();
+  if (QFile::exists(lifecyclePath))
+    return 72;
 
   CaptureEditor editor(capture);
   editor.resize(800, 600);
@@ -164,6 +321,45 @@ int main(int argc, char **argv) {
   if (editor.cursor().shape() != Qt::ArrowCursor ||
       QImage(snapshotPath) == beforeFreehandSnapshot)
     return 28;
+  const QImage beforeHighlighterSnapshot(snapshotPath);
+  QTest::keyClick(&editor, Qt::Key_H);
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(280, 330));
+  QTest::mouseMove(&editor, QPoint(390, 330), 10);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(500, 330));
+  application.processEvents();
+  const QImage highlighterSnapshot(snapshotPath);
+  if (editor.cursor().shape() != Qt::ArrowCursor ||
+      highlighterSnapshot == beforeHighlighterSnapshot)
+    return 73;
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(390, 330));
+  QWheelEvent highlighterScale(QPointF(390, 330), QPointF(390, 330), {},
+                               {0, 120}, Qt::NoButton, Qt::NoModifier,
+                               Qt::NoScrollPhase, false);
+  QApplication::sendEvent(&editor, &highlighterScale);
+  application.processEvents();
+  const QImage scaledHighlighterSnapshot(snapshotPath);
+  if (scaledHighlighterSnapshot == highlighterSnapshot)
+    return 74;
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (QImage(snapshotPath) != highlighterSnapshot)
+    return 75;
+  QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
+  application.processEvents();
+  if (QImage(snapshotPath) != scaledHighlighterSnapshot)
+    return 76;
+  QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(390, 330));
+  QTest::mouseMove(&editor, QPoint(410, 350), 20);
+  QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(410, 350));
+  application.processEvents();
+  if (QImage(snapshotPath) == scaledHighlighterSnapshot)
+    return 77;
+  QTest::keyClick(&editor, Qt::Key_Z, Qt::ControlModifier);
+  application.processEvents();
+  if (QImage(snapshotPath) != scaledHighlighterSnapshot)
+    return 78;
   const QImage beforeMarkerSnapshot(snapshotPath);
   QTest::keyClick(&editor, Qt::Key_2);
   QTest::keyClick(&editor, Qt::Key_C);
@@ -173,7 +369,7 @@ int main(int argc, char **argv) {
     return 48;
   const QImage beforeTextSnapshot(snapshotPath);
   QTest::keyClick(&editor, Qt::Key_T);
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(320, 133));
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(341, 133));
   QWheelEvent textSizeWheel(QPointF(360, 320), QPointF(360, 320), {}, {0, -120},
                             Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase,
                             false);
@@ -246,13 +442,13 @@ int main(int argc, char **argv) {
   application.processEvents();
   if (QImage(snapshotPath) == beforeBackdropSnapshot)
     return 55;
-  QTest::mouseMove(&editor, QPoint(378, 92), 20);
+  QTest::mouseMove(&editor, QPoint(398, 92), 20);
   application.processEvents();
   if (!editor.grab().save(outputRoot + QStringLiteral("-palette.png"), "PNG"))
     return 14;
-  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(460, 134));
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(470, 134));
   QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(320, 200));
-  QTest::mouseMove(&editor, QPoint(178, 92), 20);
+  QTest::mouseMove(&editor, QPoint(198, 92), 20);
   application.processEvents();
   if (editor.cursor().shape() != Qt::PointingHandCursor)
     return 12;
@@ -293,6 +489,22 @@ int main(int argc, char **argv) {
   if (!fullscreenEditor.grab().save(
           outputRoot + QStringLiteral("-fullscreen-editor.png"), "PNG"))
     return 16;
+
+  CaptureData fileData;
+  fileData.monitor.scale = 1.0;
+  fileData.monitor.pixelSize = {300, 200};
+  fileData.source = QImage(300, 200, QImage::Format_RGB32);
+  fileData.source.fill(QColor(QStringLiteral("#1a2b3c")));
+  fileData.preview = fileData.source;
+  CaptureEditor fileEditor(fileData, CaptureEditor::CaptureMode::File);
+  fileEditor.resize(800, 600);
+  fileEditor.show();
+  application.processEvents();
+  const QImage fileUi = fileEditor.grab().toImage();
+  if (fileEditor.cursor().shape() != Qt::ArrowCursor ||
+      fileUi.pixelColor(400, 305) != QColor(QStringLiteral("#1a2b3c")) ||
+      !fileUi.save(outputRoot + QStringLiteral("-file-mode.png"), "PNG"))
+    return 70;
 
   CaptureData windowSurfaceCapture = capture;
   windowSurfaceCapture.monitor.scale = 1.0;
@@ -355,6 +567,34 @@ int main(int argc, char **argv) {
       QColor(QStringLiteral("#0a84ff")))
     return 58;
 
+  CaptureEditor previewClipEditor(capture);
+  previewClipEditor.resize(800, 600);
+  previewClipEditor.show();
+  application.processEvents();
+  QTest::mousePress(&previewClipEditor, Qt::LeftButton, Qt::NoModifier,
+                    QPoint(100, 100));
+  QTest::mouseMove(&previewClipEditor, QPoint(650, 470), 20);
+  QTest::mouseRelease(&previewClipEditor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(650, 470));
+  QTest::keyClick(&previewClipEditor, Qt::Key_C);
+  QTest::mouseClick(&previewClipEditor, Qt::LeftButton, Qt::NoModifier,
+                    QPoint(640, 300));
+  QTest::keyClick(&previewClipEditor, Qt::Key_B);
+  QTest::mousePress(&previewClipEditor, Qt::LeftButton, Qt::NoModifier,
+                    QPoint(682, 305));
+  QTest::mouseMove(&previewClipEditor, QPoint(500, 305), 20);
+  QTest::mouseRelease(&previewClipEditor, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(500, 305));
+  application.processEvents();
+  const QImage clippedPreview = previewClipEditor.grab().toImage();
+  for (int y = 270; y <= 330; ++y) {
+    for (int x = 690; x <= 760; ++x) {
+      const QColor pixel = clippedPreview.pixelColor(x, y);
+      if (pixel.red() > 240 && pixel.green() < 96 && pixel.blue() < 128)
+        return 66;
+    }
+  }
+
   QVector<Annotation> annotations;
   annotations.push_back({Annotation::Kind::Arrow,
                          {50, 60},
@@ -378,6 +618,12 @@ int main(int argc, char **argv) {
   freehand.size = 4;
   freehand.points = {{40, 170}, {110, 145}, {165, 185}, {225, 150}};
   annotations.push_back(std::move(freehand));
+  Annotation highlighter;
+  highlighter.kind = Annotation::Kind::Highlighter;
+  highlighter.color = QColor(QStringLiteral("#ffd60a"));
+  highlighter.size = 5;
+  highlighter.points = {{50, 210}, {140, 205}, {220, 215}, {300, 200}};
+  annotations.push_back(std::move(highlighter));
   annotations.push_back({Annotation::Kind::Marker,
                          {260, 180},
                          {},
@@ -407,6 +653,40 @@ int main(int argc, char **argv) {
   if (rendered.isNull() || rendered.size() != QSize(628, 428) ||
       !rendered.save(outputRoot + QStringLiteral("-render.png"), "PNG"))
     return 3;
+
+  CaptureData clippingCapture;
+  clippingCapture.monitor.scale = 1.0;
+  clippingCapture.source = QImage(100, 100, QImage::Format_RGB32);
+  clippingCapture.source.fill(Qt::white);
+  clippingCapture.preview = clippingCapture.source;
+  const auto edgeAnnotation = [](QPointF start, QPointF end) {
+    Annotation annotation;
+    annotation.kind = Annotation::Kind::Rectangle;
+    annotation.start = start;
+    annotation.end = end;
+    annotation.color = QColor(QStringLiteral("#ff00ff"));
+    annotation.size = 4;
+    return annotation;
+  };
+  const QVector<Annotation> edgeAnnotations{
+      edgeAnnotation({-30, 20}, {10, 40}),
+      edgeAnnotation({90, 20}, {130, 40}),
+      edgeAnnotation({20, -30}, {40, 10}),
+      edgeAnnotation({20, 90}, {40, 130}),
+  };
+  const QImage clippedExport =
+      renderCapture(clippingCapture, QRectF(0, 0, 100, 100), edgeAnnotations,
+                    BackgroundStyle::Aurora);
+  const QRect exportedImageBounds(64, 64, 100, 100);
+  for (int y = 0; y < clippedExport.height(); ++y) {
+    for (int x = 0; x < clippedExport.width(); ++x) {
+      if (exportedImageBounds.contains(x, y))
+        continue;
+      const QColor pixel = clippedExport.pixelColor(x, y);
+      if (pixel.red() > 240 && pixel.green() < 32 && pixel.blue() > 240)
+        return 65;
+    }
+  }
 
   CaptureData highDpiCapture = capture;
   highDpiCapture.monitor.scale = 2.0;

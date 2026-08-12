@@ -15,11 +15,12 @@ class QWheelEvent;
 class QPainter;
 class CaptureEditor final : public QWidget {
 public:
-  enum class CaptureMode { Region, Window, Fullscreen };
+  enum class CaptureMode { Region, Window, Fullscreen, File };
 
   explicit CaptureEditor(CaptureData capture,
                          CaptureMode mode = CaptureMode::Region,
                          QWidget *parent = nullptr);
+  ~CaptureEditor() override;
   void selectNiriWindow();
 
 protected:
@@ -38,6 +39,7 @@ public:
     Arrow,
     Line,
     Freehand,
+    Highlighter,
     Marker,
     Rectangle,
     Text,

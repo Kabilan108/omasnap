@@ -27,7 +27,15 @@ struct CaptureData {
 enum class BackgroundStyle { None, Aurora, Sunset, Lagoon, Violet };
 
 struct Annotation {
-  enum class Kind { Arrow, Line, Freehand, Marker, Rectangle, Text };
+  enum class Kind {
+    Arrow,
+    Line,
+    Freehand,
+    Highlighter,
+    Marker,
+    Rectangle,
+    Text
+  };
 
   Kind kind = Kind::Arrow;
   QPointF start;
@@ -52,6 +60,8 @@ struct Annotation {
 void paintAnnotation(QPainter &painter, const Annotation &annotation);
 void paintCaptureBackground(QPainter &painter, const QRectF &bounds,
                             BackgroundStyle backgroundStyle);
+[[nodiscard]] bool ensurePrivateDirectory(const QString &path);
+[[nodiscard]] QString secureRuntimeDirectory();
 [[nodiscard]] QString moveSnapshotToScreenshots(const QString &sourcePath,
                                                 QString &error);
 [[nodiscard]] QString temporarySnapshotPath();

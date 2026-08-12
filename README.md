@@ -14,15 +14,17 @@ Niri's compositor-native picker and window capture actions.
   scrolling layout without guessing their on-screen geometry.
 - Select/move/resize layers, mouse-wheel scaling, and eight external recropping
   handles.
-- Arrows, straight lines, smoothed freehand strokes, rectangles, numbered
-  markers, and editable Neucha text.
+- Arrows, straight lines, smoothed freehand strokes, translucent highlighter
+  strokes, rectangles, numbered markers, and editable Neucha text.
 - Per-layer preset or custom colors, undo/redo history, OCR-region capture,
-  mesh-gradient backdrops, and rendered drop shadows.
-- Crash-resistant working snapshots under `/tmp/omasnap/snapshot-<pid>.png`,
-  written immediately after selection and overwritten after every completed
-  edit.
+  mesh-gradient backdrops, rendered drop shadows, and crop-boundary clipping.
+- Private runtime state under `$XDG_RUNTIME_DIR/omasnap` (with a
+  `/tmp/omasnap-<uid>` fallback), including mode-`0600` working snapshots with
+  unpredictable names and cleanup on graceful exit.
 - Verified PNG clipboard output through `wl-copy`/`wl-paste`, plus timestamped
   files under `~/Pictures/Screenshots` by default.
+- Existing-image editing with `--file` or a positional image path, plus an
+  **Edit screenshot** action on saved-image notifications.
 - Correct native-pixel export on fractional or integer-scaled outputs.
 
 ## Niri integration
@@ -51,7 +53,7 @@ For the screenshot layout used by Jacurutu, replace the existing
 `Shift+Print` annotation binding in `config.kdl` with:
 
 ```kdl
-Shift+Print { spawn-sh "OMASNAP_SCREENSHOT_DIR=$HOME/media/screenshots omasnap"; }
+Shift+Print { spawn-sh "OMASNAP_SCREENSHOT_DIR=$HOME/media/screenshots exec omasnap"; }
 ```
 
 Plain `Print`, `Ctrl+Print`, and `Alt+Print` can remain bound to Niri's built-in
@@ -68,61 +70,41 @@ niri msg --json layers | jq -c '.[] | select(.namespace == "omasnap")'
 
 The second command prints the layer only while the editor is open.
 
-## Build and install
+## Run, develop, and install
 
-### NixOS
-
-The checked-in flake pins Nixpkgs and packages the application with Qt's Nix
-wrapper. Install its GC-rooted result under `~/.local`:
+The checked-in flake is the supported run and development interface:
 
 ```bash
-./install-niri
-```
-
-The installer maintains its Nix result link under
-`~/.local/state/omasnap/result`. Set `OMASNAP_PREFIX` to expose the executable
-and desktop file under another prefix. You can also run it without installing:
-
-```bash
+# Run this checkout
 nix run .
-```
 
-Enter the reproducible development shell with:
+# Pass Omasnap arguments
+nix run . -- --capture-window
+nix run . -- --file /path/to/image.png
 
-```bash
+# Run the maintained Niri branch without cloning
+nix run github:Kabilan108/omasnap/niri-native
+
+# Development and verification
 nix develop
+nix build .#omasnap
+nix flake check
 ```
 
-It provides CMake, Ninja, Qt 6, LayerShellQt, clang-format, nixfmt, shellcheck,
-and the runtime tools. Niri itself comes from the active host installation so
-its IPC client stays aligned with the running compositor.
-
-### Manual Arch Linux build
-
-Install the build and runtime dependencies:
+On Jacurutu, the persistent installation is declarative: the dotfiles flake
+provides `github:Kabilan108/omasnap/niri-native` to the Niri-only screenshot
+module and adds its `omasnap` package to `home.packages`. Update and activate
+that input through the normal dotfiles workflow after a tested branch update:
 
 ```bash
-sudo pacman -S --needed \
-  base-devel cmake ninja pkgconf qt6-base layer-shell-qt \
-  wayland wayland-protocols niri grim wl-clipboard libnotify \
-  tesseract tesseract-data-eng
+cd ~/dotfiles
+nix flake update omasnap
+nh os switch
 ```
 
-Build and install:
-
-```bash
-cmake -S . -B build -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$HOME/.local"
-cmake --build build --parallel
-cmake --install build
-```
-
-The install step places:
-
-- `~/.local/bin/omasnap`
-- `~/.local/share/applications/omasnap.desktop`
-- `~/.local/share/licenses/omasnap/Neucha-OFL.txt`
+During development, use `nix run .` from this checkout instead of rebuilding
+the full host configuration. Niri itself comes from the active host so its IPC
+client remains aligned with the running compositor.
 
 ## CLI capture modes
 
@@ -151,6 +133,20 @@ omasnap smart       # maps to region selection
 
 These options choose the initial capture flow; the editor still controls
 whether the final image is copied, saved, or both.
+
+### Edit an existing image
+
+Open any readable image directly in the annotation editor, skipping compositor
+capture:
+
+```bash
+omasnap --file /path/to/image.png
+omasnap "/path/with spaces/image.png"
+```
+
+The path must resolve to a regular readable image and decode successfully. A
+saved screenshot notification includes an **Edit screenshot** action; selecting
+it reopens that exact file in Omasnap. Dismissal and timeout do nothing.
 
 Environment overrides:
 
@@ -182,6 +178,7 @@ Install the corresponding Tesseract language data before adding a language to
 | `A` | Arrow |
 | `L` | Straight line |
 | `F` | Freehand stroke |
+| `H` | Translucent highlighter stroke |
 | `C` | Numbered marker |
 | `R` | Rectangle |
 | `T` | Neucha text |
@@ -211,11 +208,12 @@ nix flake check
 
 The package build compiles the release target, runs the interaction smoke suite,
 wraps Qt's runtime plugin paths, and starts the installed wrapper on the
-offscreen platform. The smoke executable exercises region/full-output startup
-modes, capture selection, temporary snapshot updates, annotation tools,
-undo/redo, vector movement and scaling, text editing, OCR, native-DPI output,
-endpoint-only line selection, and external crop handles. Niri IPC capture is
-verified separately in a live compositor session.
+offscreen platform. The smoke executable exercises private runtime permissions,
+snapshot lifecycle, region/full-output/file startup modes, annotation tools,
+highlighter rendering and history, crop clipping, text editing, OCR, native-DPI
+output, endpoint-only line selection, and external crop handles. Niri IPC
+capture and notification actions are verified separately in a live compositor
+session.
 
 `.github/workflows/build-linux.yml` performs the same release build and
 interaction smoke in an Arch Linux container, stages the CMake installation,
@@ -230,3 +228,4 @@ those projects.
 
 The bundled Neucha font is distributed under the SIL Open Font License; its
 license is in `assets/OFL.txt` and is installed with the application.
+Omasnap itself is distributed under the MIT License in `LICENSE`.

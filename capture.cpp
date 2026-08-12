@@ -15,12 +15,17 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
+#include <QRandomGenerator>
 #include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QThread>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 bool loadCaptureFonts() {
   static const int fontId =
@@ -35,6 +40,49 @@ QFont annotationTextFont(qreal size) {
   font.setItalic(false);
   font.setPixelSize(qRound(std::max<qreal>(18.0, size * 5.0)));
   return font;
+}
+
+bool ensurePrivateDirectory(const QString &path) {
+  if (path.isEmpty())
+    return false;
+
+  const QString cleanPath = QDir::cleanPath(path);
+  const QByteArray encoded = QFile::encodeName(cleanPath);
+  const int fd = ::open(encoded.constData(),
+                        O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+  if (fd >= 0) {
+    struct stat info{};
+    const bool ownedDirectory = ::fstat(fd, &info) == 0 &&
+                                S_ISDIR(info.st_mode) &&
+                                info.st_uid == ::geteuid();
+    const bool secured = ownedDirectory && ::fchmod(fd, S_IRWXU) == 0;
+    ::close(fd);
+    return secured;
+  }
+  if (errno != ENOENT)
+    return false;
+
+  const QString parent = QFileInfo(cleanPath).dir().absolutePath();
+  if (parent.isEmpty() || parent == cleanPath)
+    return false;
+  if (!QFileInfo(parent).isDir() && !ensurePrivateDirectory(parent))
+    return false;
+
+  if (::mkdir(encoded.constData(), S_IRWXU) == 0)
+    return true;
+  return errno == EEXIST && ensurePrivateDirectory(cleanPath);
+}
+
+QString secureRuntimeDirectory() {
+  QString runtime =
+      QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+  if (runtime.isEmpty()) {
+    runtime = QDir(QDir::tempPath())
+                  .filePath(QStringLiteral("omasnap-%1").arg(::getuid()));
+  } else {
+    runtime = QDir(runtime).filePath(QStringLiteral("omasnap"));
+  }
+  return ensurePrivateDirectory(runtime) ? QDir::cleanPath(runtime) : QString();
 }
 
 namespace {
@@ -186,11 +234,8 @@ bool copyToWaylandClipboard(const QString &mimeType, const QByteArray &payload,
 }
 
 QString runtimePath(const QString &name) {
-  QString runtime =
-      QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
-  if (runtime.isEmpty())
-    runtime = QDir::tempPath();
-  return QDir(runtime).filePath(name);
+  const QString runtime = secureRuntimeDirectory();
+  return runtime.isEmpty() ? QString() : QDir(runtime).filePath(name);
 }
 
 QString screenshotTargetPath(QString &error) {
@@ -386,7 +431,8 @@ void drawAnnotation(QPainter &painter, const Annotation &annotation) {
     return;
   }
 
-  if (annotation.kind == Annotation::Kind::Freehand) {
+  if (annotation.kind == Annotation::Kind::Freehand ||
+      annotation.kind == Annotation::Kind::Highlighter) {
     if (annotation.points.size() < 2)
       return;
     QPainterPath stroke(annotation.points.first());
@@ -397,6 +443,14 @@ void drawAnnotation(QPainter &painter, const Annotation &annotation) {
     }
     stroke.lineTo(annotation.points.last());
     painter.setBrush(Qt::NoBrush);
+    if (annotation.kind == Annotation::Kind::Highlighter) {
+      QColor ink = annotation.color;
+      if (ink.alpha() >= 255)
+        ink.setAlpha(120);
+      const qreal highlightWidth = std::max<qreal>(6.0, annotation.size * 3.0);
+      painter.setPen(QPen(ink, highlightWidth, Qt::SolidLine, Qt::RoundCap,
+                          Qt::RoundJoin));
+    }
     painter.drawPath(stroke);
     return;
   }
@@ -567,8 +621,13 @@ bool captureFocusedMonitor(CaptureData &capture, QString &error) {
                            error))
     return false;
 
-  QTemporaryFile sourceFile(
-      runtimePath(QStringLiteral("omasnap-capture-XXXXXX.ppm")));
+  const QString sourceTemplate =
+      runtimePath(QStringLiteral("omasnap-capture-XXXXXX.ppm"));
+  if (sourceTemplate.isEmpty()) {
+    error = QStringLiteral("Could not create private runtime directory");
+    return false;
+  }
+  QTemporaryFile sourceFile(sourceTemplate);
   sourceFile.setAutoRemove(true);
   if (!sourceFile.open()) {
     error = sourceFile.errorString();
@@ -640,8 +699,13 @@ bool captureSelectedWindow(CaptureData &capture, QString &error) {
                                 monitor, error))
     return false;
 
-  QTemporaryFile targetFile(
-      runtimePath(QStringLiteral("omasnap-window-XXXXXX.png")));
+  const QString targetTemplate =
+      runtimePath(QStringLiteral("omasnap-window-XXXXXX.png"));
+  if (targetTemplate.isEmpty()) {
+    error = QStringLiteral("Could not create private runtime directory");
+    return false;
+  }
+  QTemporaryFile targetFile(targetTemplate);
   targetFile.setAutoRemove(true);
   if (!targetFile.open()) {
     error = targetFile.errorString();
@@ -777,6 +841,7 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
   painter.save();
   painter.translate(marginX, marginY);
   painter.scale(scaleX, scaleY);
+  painter.setClipRect(QRectF(QPointF(), selection.size()));
   for (const Annotation &annotation : annotations)
     drawAnnotation(painter, annotation);
   painter.restore();
@@ -814,9 +879,10 @@ QString moveSnapshotToScreenshots(const QString &sourcePath, QString &error) {
 }
 
 QString temporarySnapshotPath() {
-  return QDir(QStringLiteral("/tmp/omasnap"))
-      .filePath(QStringLiteral("snapshot-%1.png")
-                    .arg(QCoreApplication::applicationPid()));
+  static const quint32 nonce = QRandomGenerator::global()->generate();
+  return runtimePath(QStringLiteral("snapshot-%1-%2.png")
+                         .arg(QCoreApplication::applicationPid())
+                         .arg(nonce, 8, 16, QChar('0')));
 }
 
 bool saveTemporarySnapshot(const QImage &image, QString path, QString &error) {
@@ -824,15 +890,39 @@ bool saveTemporarySnapshot(const QImage &image, QString path, QString &error) {
     error = QStringLiteral("Temporary snapshot is empty");
     return false;
   }
-  if (path.isEmpty())
-    path = temporarySnapshotPath();
-  const QDir root = QFileInfo(path).absoluteDir();
-  if (!QDir().mkpath(root.absolutePath())) {
-    error = QStringLiteral("Could not create snapshot directory: %1")
-                .arg(root.absolutePath());
+  const QString runtime = secureRuntimeDirectory();
+  if (runtime.isEmpty()) {
+    error = QStringLiteral("Could not create private runtime directory");
     return false;
   }
-  if (!image.save(path, "PNG")) {
+  if (path.isEmpty())
+    path = temporarySnapshotPath();
+  path = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+  if (QFileInfo(path).absolutePath() != runtime) {
+    error =
+        QStringLiteral("Temporary snapshots must stay inside %1").arg(runtime);
+    return false;
+  }
+
+  const QByteArray encodedPath = QFile::encodeName(path);
+  const int fd = ::open(encodedPath.constData(),
+                        O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC,
+                        S_IRUSR | S_IWUSR);
+  if (fd < 0 || ::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+    if (fd >= 0)
+      ::close(fd);
+    error = QStringLiteral("Could not open secure snapshot file: %1").arg(path);
+    return false;
+  }
+
+  QFile file;
+  if (!file.open(fd, QIODevice::WriteOnly, QFileDevice::AutoCloseHandle)) {
+    ::close(fd);
+    error = QStringLiteral("Could not open snapshot file handle: %1").arg(path);
+    return false;
+  }
+
+  if (!image.save(&file, "PNG")) {
     error = QStringLiteral("Could not save temporary snapshot: %1").arg(path);
     return false;
   }
@@ -849,7 +939,13 @@ bool copyTextToClipboard(const QString &text, QString &error) {
 }
 
 QString recognizeText(const QImage &image, QString &error) {
-  QTemporaryFile input(runtimePath(QStringLiteral("omasnap-ocr-XXXXXX.png")));
+  const QString inputTemplate =
+      runtimePath(QStringLiteral("omasnap-ocr-XXXXXX.png"));
+  if (inputTemplate.isEmpty()) {
+    error = QStringLiteral("Could not create private runtime directory");
+    return {};
+  }
+  QTemporaryFile input(inputTemplate);
   input.setAutoRemove(true);
   if (!input.open()) {
     error = input.errorString();
@@ -884,14 +980,20 @@ QString recognizeText(const QImage &image, QString &error) {
 }
 
 void sendCaptureNotification(const QString &message, const QString &imagePath) {
-  QStringList arguments{QStringLiteral("--app-name"),
-                        QStringLiteral("omasnap"),
-                        QStringLiteral("--expire-time"),
-                        QStringLiteral("4500"),
-                        QStringLiteral("--icon"),
-                        imagePath.isEmpty() ? QStringLiteral("camera-photo")
-                                            : imagePath,
-                        QStringLiteral("Omasnap"),
-                        message};
+  if (qEnvironmentVariableIsSet("OMASNAP_DISABLE_NOTIFICATIONS"))
+    return;
+  if (!imagePath.isEmpty()) {
+    if (!QProcess::startDetached(
+            QCoreApplication::applicationFilePath(),
+            {QStringLiteral("--saved-notification"), imagePath})) {
+      qWarning() << "Could not start saved screenshot notification helper";
+    }
+    return;
+  }
+  QStringList arguments{
+      QStringLiteral("--app-name"),    QStringLiteral("omasnap"),
+      QStringLiteral("--expire-time"), QStringLiteral("4500"),
+      QStringLiteral("--icon"),        QStringLiteral("camera-photo"),
+      QStringLiteral("Omasnap"),       message};
   QProcess::startDetached(QStringLiteral("notify-send"), arguments);
 }

@@ -51,10 +51,25 @@
             export HOME="$TMPDIR"
             export XDG_CACHE_HOME="$TMPDIR/cache"
             export XDG_RUNTIME_DIR="$TMPDIR/runtime"
+            export OMASNAP_DISABLE_NOTIFICATIONS=1
             export FONTCONFIG_FILE="${pkgs.fontconfig.out}/etc/fonts/fonts.conf"
             mkdir -p "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
             chmod 700 "$XDG_RUNTIME_DIR"
             QT_QPA_PLATFORM=offscreen ./omasnap-smoke "$TMPDIR/omasnap-smoke"
+            ./omasnap-signal-smoke int
+            ./omasnap-signal-smoke term
+            ./omasnap-cli-smoke
+            cp "$TMPDIR/omasnap-smoke-file-mode.png" "$TMPDIR/image with spaces.png"
+            QT_QPA_PLATFORM=offscreen ./omasnap --saved-notification "$TMPDIR/image with spaces.png"
+            if QT_QPA_PLATFORM=offscreen ./omasnap --file "$TMPDIR/missing.png"; then
+              echo "missing --file target unexpectedly succeeded" >&2
+              exit 1
+            fi
+            printf 'not an image\n' > "$TMPDIR/invalid image.png"
+            if QT_QPA_PLATFORM=offscreen ./omasnap "$TMPDIR/invalid image.png"; then
+              echo "invalid positional image unexpectedly succeeded" >&2
+              exit 1
+            fi
             runHook postCheck
           '';
 
@@ -71,6 +86,7 @@
           meta = {
             description = "Niri-native screenshot and annotation overlay";
             homepage = "https://github.com/Kabilan108/omasnap";
+            license = lib.licenses.mit;
             mainProgram = "omasnap";
             platforms = lib.platforms.linux;
           };

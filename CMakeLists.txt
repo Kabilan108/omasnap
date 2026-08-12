@@ -11,6 +11,10 @@ qt_add_executable(omasnap
   capture.hpp
   editor.cpp
   editor.hpp
+  image-input.cpp
+  image-input.hpp
+  signal-notifier.cpp
+  signal-notifier.hpp
 )
 qt_add_resources(omasnap "capture-fonts"
   PREFIX "/fonts"
@@ -59,12 +63,34 @@ target_link_libraries(omasnap-smoke PRIVATE
   LayerShellQt::Interface
 )
 
+qt_add_executable(omasnap-signal-smoke
+  signal-smoke.cpp
+  signal-notifier.cpp
+  signal-notifier.hpp
+)
+target_compile_features(omasnap-signal-smoke PRIVATE cxx_std_23)
+target_compile_options(omasnap-signal-smoke PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(omasnap-signal-smoke PRIVATE Qt6::Core)
+
+qt_add_executable(omasnap-cli-smoke
+  cli-smoke.cpp
+  image-input.cpp
+  image-input.hpp
+)
+target_compile_features(omasnap-cli-smoke PRIVATE cxx_std_23)
+target_compile_options(omasnap-cli-smoke PRIVATE -Wall -Wextra -Wpedantic)
+target_link_libraries(omasnap-cli-smoke PRIVATE Qt6::Core Qt6::Gui)
+
 install(TARGETS omasnap
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
 install(FILES assets/OFL.txt
   DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/omasnap"
   RENAME Neucha-OFL.txt
+)
+install(FILES LICENSE
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/omasnap"
+  RENAME MIT.txt
 )
 install(FILES omasnap.desktop
   DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
