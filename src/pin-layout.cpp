@@ -33,3 +33,10 @@ QRect clampPinGeometry(const QRect &pin, const QRect &bounds) {
       std::max(bounds.top(), bounds.bottom() - pin.height() + 1));
   return {x, y, pin.width(), pin.height()};
 }
+
+int pinOutputIndex(const QString &requestedOutput,
+                   const QStringList &availableOutputs) {
+  if (requestedOutput.isEmpty())
+    return -1;
+  return availableOutputs.indexOf(requestedOutput);
+}

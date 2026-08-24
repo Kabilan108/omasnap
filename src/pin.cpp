@@ -375,10 +375,36 @@ private:
 
 } // namespace
 
-int runPinnedCapture(const QString &path) {
+int runPinnedCapture(const QString &path, const QString &outputName) {
   QImage image(path);
   if (image.isNull()) {
     qWarning("omasnap: could not load pinned image %s", qUtf8Printable(path));
+    return 1;
+  }
+
+  const QList<QScreen *> screens = QGuiApplication::screens();
+  QStringList outputNames;
+  outputNames.reserve(screens.size());
+  for (const QScreen *screen : screens)
+    outputNames.append(screen->name());
+
+  QScreen *targetScreen = nullptr;
+  if (!outputName.isEmpty()) {
+    const int outputIndex = pinOutputIndex(outputName, outputNames);
+    if (outputIndex < 0) {
+      qCritical().noquote()
+          << QStringLiteral("omasnap: pinned output is no longer available: %1")
+                 .arg(outputName);
+      return 1;
+    }
+    targetScreen = screens.at(outputIndex);
+  } else {
+    targetScreen = QGuiApplication::screenAt(QCursor::pos());
+    if (!targetScreen)
+      targetScreen = QGuiApplication::primaryScreen();
+  }
+  if (!targetScreen) {
+    qCritical("omasnap: no output is available for pinned image");
     return 1;
   }
 
@@ -387,6 +413,7 @@ int runPinnedCapture(const QString &path) {
     qWarning("omasnap: could not lock pinned image %s", qUtf8Printable(path));
     return 1;
   }
+  window.setScreen(targetScreen);
   static_cast<void>(window.winId());
   QWindow *handle = window.windowHandle();
   LayerShellQt::Window *layer =
@@ -396,7 +423,9 @@ int runPinnedCapture(const QString &path) {
     return 1;
   }
 
+  handle->setScreen(targetScreen);
   layer->setScope(QStringLiteral("omasnap-pin"));
+  layer->setScreen(targetScreen);
   LayerShellQt::Window::Anchors anchors;
   anchors.setFlag(LayerShellQt::Window::AnchorBottom);
   anchors.setFlag(LayerShellQt::Window::AnchorRight);

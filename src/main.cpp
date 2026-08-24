@@ -14,9 +14,11 @@
 #include <QFile>
 #include <QGuiApplication>
 #include <QLockFile>
+#include <QProcess>
 #include <QScreen>
 #include <QSocketNotifier>
 #include <QUrl>
+#include <QTimer>
 #include <QWindow>
 
 #include <csignal>
@@ -25,6 +27,48 @@
 #include <unistd.h>
 
 namespace {
+int runSavedNotification(const QString &inputPath) {
+  const QString imagePath = resolveLocalImagePath(inputPath);
+  if (imagePath.isEmpty()) {
+    qWarning().noquote()
+        << QStringLiteral("Saved screenshot no longer exists: %1").arg(inputPath);
+    return 1;
+  }
+  if (qEnvironmentVariableIsSet("OMASNAP_DISABLE_NOTIFICATIONS"))
+    return 0;
+
+  QProcess notification;
+  notification.setProcessChannelMode(QProcess::SeparateChannels);
+  notification.start(QStringLiteral("notify-send"),
+                     {QStringLiteral("--app-name"), QStringLiteral("omasnap"),
+                      QStringLiteral("--expire-time"), QStringLiteral("10000"),
+                      QStringLiteral("--icon"), imagePath,
+                      QStringLiteral("--action=edit=Edit screenshot"),
+                      QStringLiteral("--wait"), QStringLiteral("Omasnap"),
+                      QStringLiteral("Screenshot saved")});
+  if (!notification.waitForStarted(2000)) {
+    qWarning().noquote()
+        << QStringLiteral("Could not start saved screenshot notification: %1")
+               .arg(notification.errorString());
+    return 1;
+  }
+  if (!notification.waitForFinished(-1))
+    return 1;
+  if (notification.exitStatus() != QProcess::NormalExit ||
+      notification.exitCode() != 0)
+    return 0;
+
+  if (QString::fromUtf8(notification.readAllStandardOutput()).trimmed() ==
+      QStringLiteral("edit")) {
+    if (!QProcess::startDetached(QCoreApplication::applicationFilePath(),
+                                 {QStringLiteral("--file"), imagePath})) {
+      qWarning() << "Could not reopen saved screenshot";
+      return 1;
+    }
+  }
+  return 0;
+}
+
 class PosixSignalNotifier final : public QObject {
 public:
   explicit PosixSignalNotifier(QObject *parent = nullptr) : QObject(parent) {
@@ -38,8 +82,9 @@ public:
       const int savedErrno = errno;
       const char byte = 1;
       const int fd = signalFd_;
-      if (fd >= 0)
-        static_cast<void>(::write(fd, &byte, sizeof(byte)));
+      if (fd >= 0 && ::write(fd, &byte, sizeof(byte)) < 0) {
+        // The datagram is only a wake-up hint; a full socket can drop it.
+      }
       errno = savedErrno;
     };
     sigemptyset(&sa.sa_mask);
@@ -93,7 +138,7 @@ private:
 int main(int argc, char **argv) {
   QCoreApplication::setApplicationName(QStringLiteral("omasnap"));
   QCoreApplication::setApplicationVersion(QString::fromLatin1(OMASNAP_VERSION));
-  QCoreApplication::setOrganizationName(QStringLiteral("Omarchy"));
+  QCoreApplication::setOrganizationName(QStringLiteral("Omasnap"));
   qputenv("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell");
   QGuiApplication::setDesktopFileName(QStringLiteral("omasnap"));
   QApplication application(argc, argv);
@@ -105,8 +150,7 @@ int main(int argc, char **argv) {
 
   QCommandLineParser parser;
   parser.setApplicationDescription(QStringLiteral(
-      "Native Wayland screenshot and annotation overlay for Hyprland and "
-      "Omarchy.\n"
+      "Native Wayland screenshot and annotation overlay for Niri.\n"
       "\n"
       "Only one capture overlay runs at a time. Starting omasnap again while "
       "an\noverlay is open dismisses it: the running instance is asked to "
@@ -156,12 +200,33 @@ int main(int argc, char **argv) {
       QStringLiteral("Show an image as a pinned always-visible layer."),
       QStringLiteral("path"));
   parser.addOption(pinOption);
+  QCommandLineOption pinOutputOption(
+      QStringLiteral("pin-output"), QString(), QStringLiteral("name"));
+  pinOutputOption.setFlags(QCommandLineOption::HiddenFromHelp);
+  parser.addOption(pinOutputOption);
+  const QCommandLineOption savedNotificationOption(
+      QStringLiteral("saved-notification"), QString(), QStringLiteral("path"));
+  parser.addOption(savedNotificationOption);
   parser.addPositionalArgument(
       QStringLiteral("target"),
       QStringLiteral("Capture mode (smart, region, windows, fullscreen) or the "
                      "path of an image file to edit."),
       QStringLiteral("[target]"));
   parser.process(application);
+
+  const QStringList positional = parser.positionalArguments();
+  if (parser.isSet(savedNotificationOption)) {
+    if (parser.isSet(fullscreenOption) || parser.isSet(windowOption) ||
+        parser.isSet(regionOption) || parser.isSet(copyOption) ||
+        parser.isSet(saveOption) || parser.isSet(fileOption) ||
+        parser.isSet(clipboardOption) || parser.isSet(pinOption) ||
+        parser.isSet(pinOutputOption) ||
+        !positional.isEmpty()) {
+      qCritical() << "Saved notification mode cannot be combined with other targets";
+      return 2;
+    }
+    return runSavedNotification(parser.value(savedNotificationOption));
+  }
 
   QString filePath = parser.value(fileOption);
   const bool clipboardInput = parser.isSet(clipboardOption);
@@ -182,7 +247,6 @@ int main(int argc, char **argv) {
   else if (parser.isSet(windowOption))
     captureMode = CaptureEditor::CaptureMode::Window;
 
-  const QStringList positional = parser.positionalArguments();
   if (parser.isSet(pinOption)) {
     if (!filePath.isEmpty() || clipboardInput || requestedModes > 0 ||
         !positional.isEmpty() || quickOutputMode != QuickOutputMode::None) {
@@ -193,7 +257,11 @@ int main(int argc, char **argv) {
     QString pinPath = QUrl(parser.value(pinOption)).toLocalFile();
     if (pinPath.isEmpty())
       pinPath = parser.value(pinOption);
-    return runPinnedCapture(pinPath);
+    return runPinnedCapture(pinPath, parser.value(pinOutputOption));
+  }
+  if (parser.isSet(pinOutputOption)) {
+    qCritical() << "Pin output may only be specified with pinned mode";
+    return 2;
   }
   if (positional.size() > 1) {
     qCritical() << "Only one capture target may be specified";
@@ -316,14 +384,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // Grab the output before the layer exists. ext-image-copy-capture waits for
-  // a composited frame, so mapping the dim overlay first photographs the veil.
+  // Grab the output before the layer exists so the overlay is never captured.
   const bool instantFullscreenOutput =
       !editingImage && captureMode == CaptureEditor::CaptureMode::Fullscreen &&
       quickOutputMode != QuickOutputMode::None;
   if (!editingImage &&
-      !captureMonitorPixels(capture.monitor, capture,
-                            !instantFullscreenOutput, error)) {
+      !captureMonitorPixels(capture.monitor, capture, error)) {
     qCritical().noquote() << error;
     sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
     return 1;
@@ -347,6 +413,15 @@ int main(int argc, char **argv) {
     return 0;
   }
 
+  QByteArray focusedWindowJson;
+  if (!editingImage &&
+      !queryFocusedWindow(focusedWindowJson, error) &&
+      captureMode == CaptureEditor::CaptureMode::Window) {
+    qCritical().noquote() << error;
+    sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
+    return 1;
+  }
+
   QScreen *targetScreen = QGuiApplication::primaryScreen();
   for (QScreen *screen : QGuiApplication::screens()) {
     if (screen->name() == capture.monitor.name) {
@@ -356,16 +431,14 @@ int main(int argc, char **argv) {
   }
 
   if (!editingImage) {
-    qInfo().noquote() << QStringLiteral(
-                             "Captured %1 workspace %2 with %3 selectable "
-                             "windows")
+    qInfo().noquote() << QStringLiteral("Captured %1 workspace %2")
                              .arg(capture.monitor.name)
-                             .arg(capture.monitor.workspaceId)
-                             .arg(capture.windows.size());
+                             .arg(capture.monitor.workspaceId);
   }
 
   CaptureEditor editor(std::move(capture), captureMode, quickOutputMode,
                        restoredLog);
+  editor.setFocusedWindowTarget(std::move(focusedWindowJson));
   editor.setScreen(targetScreen);
   editor.setGeometry(targetScreen->geometry());
   editor.winId();
@@ -390,6 +463,8 @@ int main(int argc, char **argv) {
   layerWindow->setActivateOnShow(true);
   editor.show();
   editor.setFocus(Qt::ActiveWindowFocusReason);
+  if (captureMode == CaptureEditor::CaptureMode::Window)
+    QTimer::singleShot(0, &editor, &CaptureEditor::captureFocusedNiriWindow);
 
   return application.exec();
 }

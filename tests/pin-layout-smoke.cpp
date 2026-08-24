@@ -46,5 +46,13 @@ bool runPinLayoutSmoke(QString &error) {
     error = QStringLiteral("Pinned geometry did not clamp at top-left");
     return false;
   }
+
+  const QStringList outputs{QStringLiteral("eDP-1"), QStringLiteral("DP-4")};
+  if (pinOutputIndex(QStringLiteral("DP-4"), outputs) != 1 ||
+      pinOutputIndex(QStringLiteral("missing"), outputs) != -1 ||
+      pinOutputIndex(QString(), outputs) != -1) {
+    error = QStringLiteral("Pinned output selection did not use an exact name");
+    return false;
+  }
   return true;
 }

@@ -20,14 +20,10 @@ jobs:
         run: >-
           pacman -Syu --noconfirm --needed
           base-devel cmake ninja pkgconf qt6-base layer-shell-qt
-          wayland wayland-protocols wl-clipboard tesseract tesseract-data-eng
-          clang
+          grim libnotify wl-clipboard tesseract tesseract-data-eng clang
 
       - name: Check out source
         uses: actions/checkout@v4
-
-      - name: Check installer scripts
-        run: bash -n install-omarchy
 
       - name: Build, run interaction smoke, and analyze sources
         env:

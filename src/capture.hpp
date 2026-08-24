@@ -17,19 +17,14 @@
 class QFont;
 class QPainter;
 class QProcess;
+class QByteArray;
 
 struct MonitorInfo {
   QString name;
   QRect geometry;
   QSize pixelSize;
   qreal scale = 1.0;
-  int workspaceId = 0;
-};
-
-struct WindowTarget {
-  QRect rect;
-  QString stableId;
-  QString title;
+  qint64 workspaceId = -1;
 };
 
 struct CaptureData {
@@ -37,7 +32,6 @@ struct CaptureData {
   QImage source;
   /** Logical size the native source image is presented at. */
   QSize previewSize;
-  QVector<WindowTarget> windows;
 };
 
 enum class BackgroundStyle { None, Aurora, Sunset, Lagoon, Violet };
@@ -113,38 +107,32 @@ enum class AnnotationLayer { Redaction, Default };
 [[nodiscard]] bool loadCaptureFonts();
 [[nodiscard]] QFont annotationTextFont(qreal size);
 /**
- * Discovers the focused monitor (name, geometry, scale). Fast: only one
- * `hyprctl monitors` call. Safe to call on the main thread to position the
- * overlay after the pixel capture has already produced a frozen frame.
+ * Discovers the focused Niri output and its active workspace.
  */
 [[nodiscard]] bool probeFocusedMonitor(MonitorInfo &monitor, QString &error);
 /**
- * Captures the focused monitor's pixels onto the given monitor, and its window
- * list when `includeWindows` is set. Window discovery runs alongside the screen
- * grab, so callers that never show the overlay should skip it. Pure I/O and
- * image work (no GUI objects): safe on any thread.
+ * Captures the focused output with grim.
  */
 [[nodiscard]] bool captureMonitorPixels(const MonitorInfo &monitor,
-                                        CaptureData &capture,
-                                        bool includeWindows, QString &error);
+                                        CaptureData &capture, QString &error);
 /** Convenience: probes the focused monitor, then captures its pixels. */
-[[nodiscard]] bool captureFocusedMonitor(CaptureData &capture,
-                                         bool includeWindows, QString &error);
+[[nodiscard]] bool captureFocusedMonitor(CaptureData &capture, QString &error);
+/** Queries the regular window focused before an exclusive layer is mapped. */
+[[nodiscard]] bool queryFocusedWindow(QByteArray &windowJson, QString &error);
+/** Uses Niri's focused-window query and screenshot action for a clean capture. */
+[[nodiscard]] bool captureFocusedWindow(CaptureData &capture, QString &error);
+/** Completes clean capture from Niri window JSON containing id and workspace_id. */
+[[nodiscard]] bool capturePickedWindow(const QByteArray &pickedJson,
+                                       CaptureData &capture, QString &error);
 /** Bounds of a text layer's glyph box, or of its readability pill when it
  *  has one; `start` is the baseline origin. */
 [[nodiscard]] QRectF annotationTextBounds(const Annotation &annotation);
-/** Captures the named output through ext-image-copy-capture. */
-[[nodiscard]] bool captureOutputSurface(const MonitorInfo &monitor,
-                                        QImage &image, QString &error);
 [[nodiscard]] QString operationLogPath(const QString &imagePath);
 [[nodiscard]] bool saveOperationLog(const QString &path, const OperationLog &log,
                                     QString &error);
 [[nodiscard]] bool loadOperationLog(const QString &path, OperationLog &log,
                                     QString &error);
 [[nodiscard]] QString temporaryExportPath();
-/** Returns an upright image for captured Wayland buffer contents. */
-[[nodiscard]] QImage normalizeWaylandCapture(const QImage &image,
-                                             std::uint32_t transform);
 [[nodiscard]] QImage renderCapture(const CaptureData &capture,
                                    const QRectF &selection,
                                    const QVector<Annotation> &annotations,
@@ -203,7 +191,5 @@ void prunePinnedSnapshots();
 [[nodiscard]] bool saveTemporarySnapshot(const QImage &image, QString path,
                                          QString &error, int quality = -1);
 [[nodiscard]] QString recognizeText(const QImage &image, QString &error);
-/** Quotes a string for a shell argument passed to omarchy-notification-send. */
-[[nodiscard]] QString shellQuote(QString value);
 void sendCaptureNotification(const QString &message,
                              const QString &imagePath = {});

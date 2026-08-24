@@ -51,11 +51,15 @@ public:
   /**
    * Kicks off the monitor pixel capture in the background. The overlay stays
    * interactive (showing a "Capturing…" state) until it lands, then emits
-   * captureReady. Safe to call once, before entering the event loop. Window
-   * discovery runs alongside the grab and is skipped when `includeWindows` is
-   * false, for callers that never show the overlay.
+   * captureReady. Safe to call once, before entering the event loop.
    */
-  void startCapture(CaptureMode mode, bool includeWindows);
+  void startCapture(CaptureMode mode);
+  /** Captures the regular Niri window focused beneath the layer overlay. */
+  void captureFocusedNiriWindow();
+  /** Retains the focused-window response obtained before the layer mapped. */
+  void setFocusedWindowTarget(QByteArray windowJson) {
+    focusedWindowJson_ = windowJson;
+  }
   /**
    * Blocks until the in-flight snapshot persistence has drained, letting the
    * event loop run meanwhile. Returns whether the last write succeeded.
@@ -280,9 +284,6 @@ private:
   [[nodiscard]] QRectF sourceRect(const QRectF &logicalRect) const;
   [[nodiscard]] QPointF sourcePoint(const QPointF &logicalPoint) const;
   [[nodiscard]] QRectF mapWidgetToPreview(const QRectF &widgetRect) const;
-  [[nodiscard]] QRectF mapPreviewToWidget(const QRectF &previewRect) const;
-  [[nodiscard]] int windowAt(const QPointF &position) const;
-  [[nodiscard]] int windowInDirection(int current, int key) const;
   [[nodiscard]] QVector<ToolbarButton> toolbarButtons() const;
   [[nodiscard]] QColor annotationColor() const;
   [[nodiscard]] QLineF creationSpan(const QPointF &rawEnd) const;
@@ -296,7 +297,6 @@ private:
   void applyEditState(const EditState &state);
   void cancelActiveDragForHistory();
   void beginText(const QPointF &point, int annotationIndex = -1);
-  void chooseWindow(int index);
   void duplicateSelectedAnnotation();
   [[nodiscard]] EditState editState() const;
   void enterEdit(QString status);
@@ -312,7 +312,6 @@ private:
   void commitBackground(BackgroundStyle style);
   void replayLog();
   void redoEdit();
-  void selectWindowInDirection(int key);
   void finish(OutputMode mode);
   void handleEscape();
   void handleToolbar(const QString &action);
@@ -381,7 +380,6 @@ private:
   qreal cutBandHi_ = 0.0;
   qreal cutDragRatio_ = 1.0;
   qreal cutDragOriginOffset_ = 0.0;
-  bool windowMode_ = false;
   BackgroundStyle backgroundStyle_ = BackgroundStyle::None;
   bool busy_ = false;
   bool colorPaletteOpen_ = false;
@@ -393,7 +391,6 @@ private:
   QPointF shapeIntentOrigin_;
   QPointF textSizeIntentOrigin_;
   bool usingCustomColor_ = false;
-  int hoveredWindow_ = -1;
   int colorIndex_ = 0;
   PaletteConfig paletteConfig_ = defaultPaletteConfig();
   QColor customColor_;
@@ -446,6 +443,8 @@ private:
     QString error;
   };
   QFutureWatcher<CaptureJob> captureWatcher_;
+  QFutureWatcher<CaptureJob> windowCaptureWatcher_;
+  QByteArray focusedWindowJson_;
   bool capturePending_ = false;
   bool captureStarted_ = false;
   CaptureMode pendingMode_ = CaptureMode::Region;
@@ -453,6 +452,7 @@ private:
   QFutureWatcher<QImage> pinWatcher_;
   bool pinPending_ = false;
   QString pendingPinPath_;
+  QString pendingPinOutputName_;
   QVector<Annotation> annotations_;
   QVector<Operation> ops_;
   int opIndex_ = 0;
@@ -467,7 +467,7 @@ private:
   QuickOutputMode quickOutputMode_ = QuickOutputMode::None;
   int pinCount_ = 0;
   QString status_ =
-      QStringLiteral("Drag to select an area · Space selects a window");
+      QStringLiteral("Drag to select an area · Space captures the focused window");
   InlineTextEdit *textEditor_ = nullptr;
   QPointF textPoint_;
   QVector<Annotation> originalSelectedAnnotations_;

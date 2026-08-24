@@ -4,6 +4,7 @@
 #include <QPoint>
 #include <QRect>
 #include <QSize>
+#include <QStringList>
 
 [[nodiscard]] QPoint pinPositionFromGlobalPointer(const QPoint &globalPointer,
                                                   const QPoint &screenOrigin,
@@ -13,3 +14,5 @@
                                      const QSize &slotSize, int index, int gap,
                                      int margin);
 [[nodiscard]] QRect clampPinGeometry(const QRect &pin, const QRect &bounds);
+[[nodiscard]] int pinOutputIndex(const QString &requestedOutput,
+                                 const QStringList &availableOutputs);

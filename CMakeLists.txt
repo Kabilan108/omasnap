@@ -1,35 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
-project(omasnap VERSION 1.17.1 LANGUAGES C CXX)
+project(omasnap VERSION 1.17.1 LANGUAGES CXX)
 include(GNUInstallDirs)
 include(CTest)
 set(CMAKE_AUTOMOC ON)
 
-find_package(PkgConfig REQUIRED)
 find_package(Qt6 6.8 REQUIRED COMPONENTS Concurrent Core Gui Test Widgets)
 find_package(LayerShellQt REQUIRED)
-pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
-find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
-
-set(PROTOCOL_XMLS
-  # ext-image-capture-source references this interface even for output-only use.
-  /usr/share/wayland-protocols/staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml
-  /usr/share/wayland-protocols/staging/ext-image-capture-source/ext-image-capture-source-v1.xml
-  /usr/share/wayland-protocols/staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml
-)
-set(PROTOCOL_SOURCES)
-foreach(PROTOCOL_XML IN LISTS PROTOCOL_XMLS)
-  get_filename_component(PROTOCOL_NAME "${PROTOCOL_XML}" NAME_WE)
-  set(PROTOCOL_HEADER "${CMAKE_CURRENT_BINARY_DIR}/${PROTOCOL_NAME}-client-protocol.h")
-  set(PROTOCOL_CODE "${CMAKE_CURRENT_BINARY_DIR}/${PROTOCOL_NAME}-protocol.c")
-  add_custom_command(
-    OUTPUT "${PROTOCOL_HEADER}" "${PROTOCOL_CODE}"
-    COMMAND "${WAYLAND_SCANNER}" client-header "${PROTOCOL_XML}" "${PROTOCOL_HEADER}"
-    COMMAND "${WAYLAND_SCANNER}" private-code "${PROTOCOL_XML}" "${PROTOCOL_CODE}"
-    DEPENDS "${PROTOCOL_XML}"
-    VERBATIM
-  )
-  list(APPEND PROTOCOL_SOURCES "${PROTOCOL_HEADER}" "${PROTOCOL_CODE}")
-endforeach()
 
 add_library(omasnap-core STATIC
   src/cli-path.cpp
@@ -50,8 +26,6 @@ add_library(omasnap-core STATIC
   src/palette-config.hpp
   src/eyedropper.cpp
   src/eyedropper.hpp
-  src/surface-capture.cpp
-  ${PROTOCOL_SOURCES}
   src/editor.cpp
   src/editor.hpp
 )
@@ -68,17 +42,18 @@ target_include_directories(omasnap-core PUBLIC
 target_compile_features(omasnap-core PUBLIC cxx_std_23)
 target_compile_options(omasnap-core PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(omasnap-core PUBLIC
+  LayerShellQt::Interface
   Qt6::Concurrent
   Qt6::Core
   Qt6::Gui
   Qt6::Widgets
-  PkgConfig::WaylandClient
 )
 
 qt_add_executable(omasnap src/main.cpp src/pin.cpp src/pin.hpp)
 target_compile_options(omasnap PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(omasnap PRIVATE OMASNAP_VERSION="${PROJECT_VERSION}")
-target_link_libraries(omasnap PRIVATE omasnap-core LayerShellQt::Interface)
+set_target_properties(omasnap PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE)
+target_link_libraries(omasnap PRIVATE omasnap-core)
 
 if(BUILD_TESTING)
 qt_add_executable(omasnap-smoke
@@ -93,8 +68,6 @@ qt_add_executable(omasnap-smoke
   tests/cut-smoke.hpp
   tests/palette-config-smoke.cpp
   tests/palette-config-smoke.hpp
-  tests/surface-capture-smoke.cpp
-  tests/surface-capture-smoke.hpp
   tests/pin-lifecycle-smoke.cpp
   tests/pin-lifecycle-smoke.hpp
   tests/pin-layout-smoke.cpp
@@ -115,6 +88,10 @@ install(TARGETS omasnap
 install(FILES assets/OFL.txt
   DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/omasnap"
   RENAME Neucha-OFL.txt
+)
+install(FILES LICENSE
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/omasnap"
+  RENAME MIT.txt
 )
 install(FILES omasnap.desktop
   DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"

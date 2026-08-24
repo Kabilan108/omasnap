@@ -1,7 +1,6 @@
 # Omasnap — Agent Guide
 
-Omasnap is a super fast, native Wayland screenshot and annotation overlay,
-built primarily for [Omarchy](https://omarchy.org) on Hyprland. It captures
+Omasnap is a fast, native Wayland screenshot and annotation overlay for Niri. It captures
 region, window, or full monitor, then opens an annotation editor with vector
 layers (arrows, lines, freehand, highlighter, rectangles, ellipses, numbered
 markers, text, OCR). Finished captures go to clipboard,
@@ -11,15 +10,14 @@ markers, text, OCR). Finished captures go to clipboard,
 
 - **Speed first.** The tool must feel instant: capture, annotate, copy. No
   startup bloat, no settings UI, no wizards.
-- **Wayland only.** Requires Wayland + Hyprland (monitor/window discovery via
-  `hyprctl`). No X11, no macOS/Windows ports, no generic-compositor support.
+- **Niri only.** Output discovery uses Niri JSON IPC, monitor capture uses `grim`,
+  and clean focused-window capture uses Niri's screenshot action. No X11,
+  macOS/Windows, Hyprland, or generic-compositor support.
 - **No backwards compatibility.** Break keybindings, CLI flags, file formats,
   or internals whenever it keeps the code simpler or the tool faster. Do not
   add compatibility shims, deprecation aliases, or migration code.
-- **Omarchy aesthetics.** Follow Omarchy conventions: uses
-  `omarchy-notification-send` when available, falls back to
-  `OMARCHY_OCR_LANGS` for OCR languages, keeps UI minimal with vector-drawn
-  icons (no icon-theme dependency) and the bundled Neucha font.
+- **Minimal native UI.** Use `notify-send`, `OMASNAP_OCR_LANGS`, vector-drawn icons
+  (no icon-theme dependency), and the bundled Neucha font.
 - **Single binary.** Everything (capture, editor, pin mode) runs from the one
   `omasnap` executable.
 
@@ -32,13 +30,13 @@ markers, text, OCR). Finished captures go to clipboard,
 | `src/capture.cpp/.hpp` | Capture, rendering, output, and source+JSON operation-log persistence |
 | `src/editor.cpp/.hpp` | Annotation editor: tools, vector layers, operation-log undo/redo, export |
 | `src/pin.cpp/.hpp` | Pinned-capture layer-shell surfaces (bottom-right, all workspaces) |
-| `src/surface-capture.cpp` | In-process output/window capture via `ext-image-copy-capture` |
 | `src/icons.cpp/.hpp` | Vector icon renderer for toolbar and pin controls |
 | `src/cli-path.cpp/.hpp` | Command-line image target resolution |
 | `src/eyedropper.cpp/.hpp` | Display-to-source color sampling |
 | `src/pin-file.cpp/.hpp`, `src/pin-layout.cpp/.hpp` | Pin file lifecycle and layout helpers |
 | `tests/*-smoke.cpp/.hpp` | Headless Qt Test coverage, including offscreen region-click, async-capture, and single-instance handover checks |
-| `install-omarchy` | Omarchy installer (deps via `omarchy-pkg-add`, installs to `~/.local`) |
+| `flake.nix` | Nix package, runtime dependencies, development shell, and package check |
+| `docs/upstream-v1.17.1-integration.md` | Upstream feature inventory and Niri port boundary |
 | `CMakeLists.txt` | Build definition; **the version lives here** (`project(omasnap VERSION ...)`) |
 
 ## Build and verify
@@ -58,8 +56,8 @@ Always run `make check` after behavioral changes. CI
 (`.github/workflows/build-linux.yml`) runs the same build and smoke on every
 push and PR.
 
-Dependencies (Arch): `base-devel cmake ninja pkgconf qt6-base layer-shell-qt
-wayland wayland-protocols wl-clipboard tesseract tesseract-data-eng`.
+Dependencies (Arch): `base-devel cmake ninja qt6-base layer-shell-qt grim
+libnotify niri wl-clipboard tesseract tesseract-data-eng`.
 
 ## Release process
 
@@ -67,14 +65,5 @@ wayland wayland-protocols wl-clipboard tesseract tesseract-data-eng`.
 2. Build and run the smoke test (above).
 3. Commit, tag `v<version>`, push main and the tag. The GitHub workflow
    attaches the build artifact to the release automatically.
-4. **Update omarchy-pkgs on every new version release.** In the
-   [omarchy-pkgs](https://github.com/omacom-io/omarchy-pkgs) fork
-   (`pkgbuilds/omasnap/`):
-   - Set `pkgver` in `PKGBUILD` to the new version.
-   - Replace `sha256sums` with the hash of
-     `https://github.com/tobi/omasnap/archive/refs/tags/v<version>.tar.gz`
-     (`curl -sL <url> | sha256sum`).
-   - Commit on a branch and open a PR to `omacom-io/omarchy-pkgs`.
-
 See `README.md` for user-facing features, keybindings, and install
 instructions — keep it in sync when behavior changes.

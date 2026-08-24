@@ -1,9 +1,9 @@
 # Omasnap
 
-A native Wayland screenshot and annotation overlay designed for Omarchy and Hyprland.
-It captures the focused monitor before mapping an exclusive layer-shell surface, so the
-editor never appears in its own screenshot. The editor retains annotations as movable,
-resizable vector layers and preserves the monitor's native pixels on scaled displays.
+A native Wayland screenshot and annotation overlay for Niri. It captures the focused
+output with `grim` before mapping an exclusive layer-shell surface, so the editor never
+appears in its own screenshot. The editor retains annotations as movable, resizable
+vector layers and preserves the output's native pixels on scaled displays.
 
 [![Looping Omasnap demonstration](assets/omasnap.gif)](assets/omasnap.mp4)
 
@@ -12,9 +12,10 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 - Freeform region, window, and full-monitor capture modes.
 - A pointer-side readout that turns any drag into a ruler: the pointer position
   while the crosshair is idle, then the frame size in native export pixels while a
-  region, a hovered window, or a crop handle is being sized.
-- Window capture is a crop of the focused-monitor frame. Overlapping windows stay
-  visible; there is no second clean-window recapture.
+  region or a crop handle is being sized.
+- Window capture uses Niri's clean compositor-native `screenshot-window` action for
+  the focused regular window. The primary clipboard representation is restored after
+  Niri's action completes, and capture aborts if it cannot be preserved first.
 - Select/move/resize layers, mouse-wheel scaling, and eight external recropping handles.
 - Arrows, straight lines, smoothed freehand strokes, translucent highlighter strokes,
   hollow or filled rectangles (optionally rounded) and ellipses, numbered markers,
@@ -39,74 +40,42 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 
 ## Platform scope
 
-The supported target is **Wayland + Hyprland**, with Omarchy as the primary integration.
-The renderer, layer surface, clipboard, and monitor capture use Wayland protocols;
-monitor/window discovery currently calls `hyprctl`. The focused output is captured
-in-process through `ext-image-copy-capture` before the layer maps. Selection displays
-that captured frame, while the annotation editor uses
-a translucent layer scrim over the live desktop and draws only the selected capture.
-Another Wayland compositor could support the application after supplying equivalent
-monitor and window discovery; generic Wayland support is not claimed by 1.0.
+The supported target is **Wayland + Niri**. Output and workspace discovery use Niri's
+JSON IPC. Focused-output capture is streamed from `grim`; clean window capture uses
+`niri msg --json focused-window` followed by Niri's `screenshot-window` action. The
+annotation surface is placed on the selected output through layer-shell-qt. Generic
+Wayland compositor support is not claimed.
 
 Runtime commands used by the application:
 
-- `hyprctl`
+- `niri`
+- `grim`
 - `wl-copy` and `wl-paste`
 - `tesseract`
-- `omarchy-notification-send` when available; saved captures include a thumbnail and
+- `notify-send`; saved captures include a thumbnail and
   reopen in Omasnap when clicked. Notification failure does not invalidate output.
 
-## Install on Omarchy
+## Install with Nix
 
-Clone the repository and run the Omarchy installer:
-
-```bash
-git clone https://github.com/tobi/omasnap.git
-cd omasnap
-./install-omarchy
-```
-
-The installer uses Omarchy's package helper for missing dependencies, builds in
-`~/.cache/omasnap`, and installs under `~/.local`. It does not modify
-Hyprland configuration.
-
-### Hyprland binding
-
-Paste this into a Lua config loaded after `require("default.hypr.omarchy")`:
-
-```lua
-hl.unbind("PRINT")
-hl.unbind("F12")
-hl.unbind("ALT + SHIFT + 4")
-
-o.bind("PRINT", "Screenshot", "omasnap")
-o.bind("F12", "Screenshot", "omasnap")
-o.bind("ALT + SHIFT + 4", "Screenshot", "omasnap")
-
-hl.layer_rule({
-  match = { namespace = "^omasnap$" },
-  no_anim = true,
-  animation = "none",
-  no_screen_share = true,
-})
-```
-
-Each of these keys toggles: the first press opens the overlay, the next press dismisses it.
-
-Apply and verify:
+Run directly from the checkout:
 
 ```bash
-hyprctl reload
-hyprctl configerrors
-hyprctl binds -j | jq -c \
-  '[.[] | select(.description == "Screenshot") | {modmask,key,description}]'
+nix run path:.
 ```
 
-`omarchy plugin add` is intentionally not used. Omarchy plugins are Quickshell QML
-extensions; they do not install native executables or system packages.
+Or install the package from the flake in a NixOS or Home Manager configuration. The
+package supplies `grim`, `notify-send`, `wl-copy`, `wl-paste`, and Tesseract on its
+runtime `PATH`; Niri and a working layer-shell environment are system requirements.
 
-Set `OMASNAP_PREFIX` before running `install-omarchy` to use a prefix other than
-`~/.local`.
+### Niri binding
+
+Bind one key to the capture mode you prefer, for example:
+
+```nix
+bindings."Print".action.spawn = [ "omasnap" "--capture-region" ];
+```
+
+The binding toggles: the first press opens the overlay, the next press dismisses it.
 
 ### Manual Arch Linux build
 
@@ -114,8 +83,8 @@ Install the complete build/runtime dependency set:
 
 ```bash
 sudo pacman -S --needed \
-  base-devel cmake ninja pkgconf qt6-base layer-shell-qt \
-  wayland wayland-protocols hyprland wl-clipboard \
+  base-devel cmake ninja qt6-base layer-shell-qt \
+  grim libnotify niri wl-clipboard \
   tesseract tesseract-data-eng
 ```
 
@@ -187,7 +156,7 @@ while an overlay is open closes the overlay and outputs nothing, rather than scr
 the overlay that is still on screen.
 
 Editing an existing image is never cancelled this way: `--file`, `--clipboard`, or an
-image path stops the running instance, waits up to two seconds for the lock, and opens the
+image path stops the running instance, waits up to 60 seconds for a safe handover, and opens the
 editor on that image. That is how a pin's Edit button and a notification click always land
 in the editor.
 
@@ -237,9 +206,7 @@ OMASNAP_OCR_LANGS="tha+eng" omasnap
 ```
 
 Install the corresponding Tesseract language data before adding a language to
-`OMASNAP_OCR_LANGS`. When unset, omasnap falls back to Omarchy's
-`OMARCHY_OCR_LANGS` (which commonly includes the user's script, e.g.
-`tha+eng`), then to `eng`.
+`OMASNAP_OCR_LANGS`. When unset, Omasnap uses `eng`.
 
 ## Controls
 
@@ -248,9 +215,8 @@ Install the corresponding Tesseract language data before adding a language to
 | Input | Action |
 |---|---|
 | Drag | Select a region, with its native pixel size shown at the pointer |
-| `Space` | Toggle region/window selection |
-| `SUPER + Arrow` | Move among windows in window mode |
-| `Enter` | Capture the highlighted window |
+| `Space` | Capture the focused regular window |
+| `Enter` | Accept the selected region |
 | `Ctrl+A` | Select the full focused monitor |
 | `Esc`, `Esc` | Dismiss |
 
@@ -333,7 +299,8 @@ edges.
 make check
 ```
 
-The smoke executable exercises region/window/fullscreen startup modes, capture selection,
+The smoke executable exercises mocked Niri focused-output and clean-window capture,
+clipboard restoration and failure aborts, region/fullscreen editor modes, capture selection,
 working-document persistence (source plus op-log JSON), annotation tools, undo/redo
 replay, vector movement and scaling, text editing, OCR, native-DPI output,
 endpoint-only line selection, external crop handles, and the native-pixel

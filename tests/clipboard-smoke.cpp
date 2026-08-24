@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QImage>
 #include <QScopeGuard>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 
 namespace {
@@ -86,8 +87,14 @@ bool runClipboardSmoke(QString &error) {
 
   const QString fakeWlPaste =
       QDir(directory.path()).filePath(QStringLiteral("wl-paste"));
-  const QByteArray script = QByteArrayLiteral(
-      "#!/usr/bin/env bash\n"
+  const QString bash = QStandardPaths::findExecutable(QStringLiteral("bash"));
+  if (bash.isEmpty()) {
+    error = QStringLiteral("Could not find bash for clipboard-test command");
+    return false;
+  }
+  const QByteArray script = QByteArrayLiteral("#!") + bash.toUtf8() +
+                            QByteArrayLiteral(
+      "\n"
       "set -euo pipefail\n"
       "if [[ \"${1:-}\" == \"--list-types\" ]]; then\n"
       "  if [[ -n \"${OMASNAP_TEST_CLIPBOARD_TEXT_ONLY:-}\" ]]; then\n"
