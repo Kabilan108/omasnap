@@ -189,6 +189,8 @@ To open the image currently on the Wayland clipboard:
 omasnap --clipboard
 ```
 
+The editor opens on the focused Niri output.
+
 The clipboard must offer readable image data. Text-only clipboard contents return an
 error instead of opening an empty editor.
 
@@ -277,7 +279,7 @@ Hover the pin to reveal its controls:
 
 | Input on a pin | Action |
 |---|---|
-| Edit button | Reopen the full-resolution PNG in Omasnap and replace the pin |
+| Edit button | Reopen the full-resolution PNG in Omasnap on the pin's output and replace the pin |
 | Link button | Copy the source file path |
 | Copy button, `Ctrl+C` | Copy the full-resolution PNG |
 | Double-wide top-left drag handle | Drag the PNG into a file-capable drop target |

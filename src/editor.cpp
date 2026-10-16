@@ -772,7 +772,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
     QStringList arguments{QStringLiteral("--pin"), path};
     if (!outputName.isEmpty())
       arguments.append(
-          {QStringLiteral("--pin-output"), outputName});
+          {QStringLiteral("--output"), outputName});
     if (!QProcess::startDetached(QCoreApplication::applicationFilePath(),
                                  arguments)) {
       QFile::remove(path);

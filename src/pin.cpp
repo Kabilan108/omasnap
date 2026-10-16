@@ -191,8 +191,11 @@ protected:
   }
 
   void reopenInEditor() {
+    QStringList arguments{QStringLiteral("--file"), path_};
+    if (const QScreen *pinScreen = screen())
+      arguments.append({QStringLiteral("--output"), pinScreen->name()});
     if (!QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                                 {path_}))
+                                 arguments))
       showToast(QStringLiteral("Could not start omasnap"));
     else {
       snapshotFile_.preserveForEditor();

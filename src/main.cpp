@@ -200,10 +200,10 @@ int main(int argc, char **argv) {
       QStringLiteral("Show an image as a pinned always-visible layer."),
       QStringLiteral("path"));
   parser.addOption(pinOption);
-  QCommandLineOption pinOutputOption(
-      QStringLiteral("pin-output"), QString(), QStringLiteral("name"));
-  pinOutputOption.setFlags(QCommandLineOption::HiddenFromHelp);
-  parser.addOption(pinOutputOption);
+  QCommandLineOption outputOption(
+      QStringLiteral("output"), QString(), QStringLiteral("name"));
+  outputOption.setFlags(QCommandLineOption::HiddenFromHelp);
+  parser.addOption(outputOption);
   const QCommandLineOption savedNotificationOption(
       QStringLiteral("saved-notification"), QString(), QStringLiteral("path"));
   parser.addOption(savedNotificationOption);
@@ -220,8 +220,7 @@ int main(int argc, char **argv) {
         parser.isSet(regionOption) || parser.isSet(copyOption) ||
         parser.isSet(saveOption) || parser.isSet(fileOption) ||
         parser.isSet(clipboardOption) || parser.isSet(pinOption) ||
-        parser.isSet(pinOutputOption) ||
-        !positional.isEmpty()) {
+        parser.isSet(outputOption) || !positional.isEmpty()) {
       qCritical() << "Saved notification mode cannot be combined with other targets";
       return 2;
     }
@@ -257,11 +256,7 @@ int main(int argc, char **argv) {
     QString pinPath = QUrl(parser.value(pinOption)).toLocalFile();
     if (pinPath.isEmpty())
       pinPath = parser.value(pinOption);
-    return runPinnedCapture(pinPath, parser.value(pinOutputOption));
-  }
-  if (parser.isSet(pinOutputOption)) {
-    qCritical() << "Pin output may only be specified with pinned mode";
-    return 2;
+    return runPinnedCapture(pinPath, parser.value(outputOption));
   }
   if (positional.size() > 1) {
     qCritical() << "Only one capture target may be specified";
@@ -302,6 +297,10 @@ int main(int argc, char **argv) {
     return 2;
   }
   const bool editingImage = clipboardInput || !filePath.isEmpty();
+  if (parser.isSet(outputOption) && !editingImage) {
+    qCritical() << "An output may only be specified with an image input";
+    return 2;
+  }
   if (editingImage && quickOutputMode != QuickOutputMode::None) {
     qCritical()
         << "Quick output options cannot be combined with an image input";
@@ -373,6 +372,11 @@ int main(int argc, char **argv) {
     capture.monitor.scale = 1.0;
     capture.monitor.pixelSize = image.size();
     capture.monitor.geometry = QRect(QPoint(0, 0), image.size());
+    capture.monitor.name = parser.value(outputOption);
+    QString outputError;
+    if (capture.monitor.name.isEmpty() &&
+        !queryFocusedOutputName(capture.monitor.name, outputError))
+      qWarning().noquote() << outputError;
     captureMode = CaptureEditor::CaptureMode::File;
     qInfo().noquote() << QStringLiteral("Opened %1 for annotation (%2x%3)")
                              .arg(inputName)
