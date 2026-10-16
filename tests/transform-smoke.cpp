@@ -174,6 +174,15 @@ bool runTransformSmoke(QString &error) {
     return false;
   }
 
+  QString focusedOutput;
+  if (!queryFocusedOutputName(focusedOutput, error) ||
+      focusedOutput != QStringLiteral("TEST")) {
+    if (error.isEmpty())
+      error = QStringLiteral("Focused Niri output name was incorrect");
+    restoreEnvironment();
+    return false;
+  }
+
   CaptureData selected;
   if (!captureFocusedWindow(selected, error) || selected.source != window ||
       selected.previewSize != QSize(160, 80) ||

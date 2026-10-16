@@ -110,6 +110,8 @@ enum class AnnotationLayer { Redaction, Default };
  * Discovers the focused Niri output and its active workspace.
  */
 [[nodiscard]] bool probeFocusedMonitor(MonitorInfo &monitor, QString &error);
+/** Names the Niri output that currently has keyboard focus. */
+[[nodiscard]] bool queryFocusedOutputName(QString &name, QString &error);
 /**
  * Captures the focused output with grim.
  */
