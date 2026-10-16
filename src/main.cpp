@@ -433,6 +433,8 @@ int main(int argc, char **argv) {
       break;
     }
   }
+  if (editingImage)
+    capture.monitor.name = targetScreen->name();
 
   if (!editingImage) {
     qInfo().noquote() << QStringLiteral("Captured %1 workspace %2")
