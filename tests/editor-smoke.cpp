@@ -5745,6 +5745,10 @@ bool runOpLogSmoke(QApplication &application, QString &error) {
   }
   QTest::keyClick(&editor, Qt::Key_Y, Qt::ControlModifier);
   application.processEvents();
+  if (!editor.waitForSnapshot()) {
+    error = QStringLiteral("Redo state did not persist to the working document");
+    return false;
+  }
   if (editor.operationIndex() != annotatedIndex ||
       editor.renderCurrentOutput() != annotated) {
     error = QStringLiteral("Redo did not replay the op log");
