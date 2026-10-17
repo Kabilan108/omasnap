@@ -17,10 +17,13 @@
 #include <QString>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QThread>
 #include <QThreadPool>
 #include <Qt>
 #include <QtCore/qtestsupport_core.h>
 #include <QtEnvironmentVariables>
+
+#include <atomic>
 
 bool runPinThemeRenderingSmoke(const QString &path, QString &error) {
   const QTemporaryDir runtime;
@@ -264,11 +267,35 @@ bool runPinRevealSmoke(QString &error) {
       error = QStringLiteral("Copying a non-PNG pin lost the original pixels");
       return false;
     }
+    // Drag-out offers image/png, so a non-PNG file's bytes are re-encoded.
+    if (!pin.dragPng_.startsWith(QByteArrayLiteral("\x89PNG")) ||
+        QImage::fromData(pin.dragPng_, "PNG").convertToFormat(image.format()) != image) {
+      error = QStringLiteral("Dragging a non-PNG pin offered non-PNG bytes as image/png");
+      return false;
+    }
     pin.close();
     drain();
   }
   if (!QFileInfo::exists(bitmap))
     return false;
+  // An action that finishes after a returned edit replaced the preview must
+  // not restore the path it saved from the older image.
+  {
+    PinWindow pin(image, bitmap, QSize(200, 113), PinLifetime::Timed);
+    std::atomic_bool release = false;
+    pin.runAction([&release] {
+      while (!release.load())
+        QThread::msleep(2);
+      return ActionResult{{}, QStringLiteral("/old/saved.png"), {}};
+    }, {});
+    ++pin.previewRevision_;
+    release = true;
+    drain();
+    if (!pin.sharedPath_.isEmpty()) {
+      error = QStringLiteral("A stale action restored the previous saved path");
+      return false;
+    }
+  }
   // A changed default is queried afresh. Unsupported ShowItems opens the
   // folder via xdg-open, never an unrelated generic FileManager1 provider.
   if (!write(QStringLiteral("default-app"), "org.example.OtherBrowser.desktop\n") ||

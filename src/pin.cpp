@@ -10,6 +10,7 @@
 
 #include <LayerShellQt/Window>
 #include <QApplication>
+#include <QBuffer>
 #include <QCloseEvent>
 #include <QDrag>
 #include <QEnterEvent>
@@ -183,6 +184,7 @@ public:
         dragPreview_ = preview.drag;
         path_ = pinDocument_->previewPath();
         sharedPath_.clear();
+        ++previewRevision_;
         update();
       }
       if (std::exchange(documentReloadPending_, false))
@@ -200,10 +202,17 @@ public:
       payload->deleteLater();
     });
     payload->setFuture(QtConcurrent::run([image = image_, path = path_] {
-      QFile file(path);
+      // Public --pin files need not be PNGs; offer PNG bytes either way.
       QByteArray png;
-      if (file.open(QIODevice::ReadOnly))
-        png = file.readAll();
+      if (QImageReader::imageFormat(path) == "png") {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly))
+          png = file.readAll();
+      } else {
+        QBuffer buffer(&png);
+        if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG"))
+          png.clear();
+      }
       return DragPayload{png, image.scaled(256, 256, Qt::KeepAspectRatio,
                                            Qt::SmoothTransformation)};
     }));
@@ -505,13 +514,14 @@ private:
     updateExpiryPause();
     auto *watcher = new QFutureWatcher<ActionResult>(this);
     connect(watcher, &QFutureWatcher<ActionResult>::finished, this,
-            [this, watcher, message] {
+            [this, watcher, message, revision = previewRevision_] {
       const auto result = watcher->result();
       watcher->deleteLater();
       actionPending_ = false;
       updateExpiryPause();
-      // Reuse a successful save even if copying or revealing it failed.
-      if (!result.sharedPath.isEmpty())
+      // Reuse a successful save even if copying or revealing it failed, but
+      // not after a returned edit replaced the image it was saved from.
+      if (!result.sharedPath.isEmpty() && revision == previewRevision_)
         sharedPath_ = result.sharedPath;
       if (result.document && !pinDocument_) {
         pinDocument_ = result.document;
@@ -698,6 +708,7 @@ private:
   bool actionPending_ = false;
   QString path_;
   QString sharedPath_;
+  quint64 previewRevision_ = 0;
   PinSnapshotFile snapshotFile_;
   PinSlotLock slotLock_;
   std::shared_ptr<PinSnapshotFile> pinDocument_;
