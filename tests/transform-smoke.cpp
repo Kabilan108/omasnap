@@ -276,6 +276,8 @@ bool runTransformSmoke(QString &error) {
     CaptureEditor editor(focused, CaptureEditor::CaptureMode::Smart,
                          QuickOutputMode::None);
     editor.setSuppressSnapshots(true);
+    editor.resize(800, 600);
+    editor.show();
     editor.setFocusedWindowTarget(
         QByteArrayLiteral("{\"id\":99,\"workspace_id\":7,\"app_id\":\"org.test.App\"}"));
     editor.captureFocusedNiriWindow();
@@ -293,6 +295,12 @@ bool runTransformSmoke(QString &error) {
     if (!seeded || editor.captureData().appId != QStringLiteral("org.test.App") ||
         editor.captureData().source != window) {
       error = QStringLiteral("Window capture dropped its backdrop, app id, or pixels");
+      restoreEnvironment();
+      return false;
+    }
+    // Its window-local selection is not a region of the output.
+    if (!editor.scrollPillRectForTest().isNull()) {
+      error = QStringLiteral("A clean window capture offered scroll capture");
       restoreEnvironment();
       return false;
     }

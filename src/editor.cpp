@@ -6845,8 +6845,11 @@ void CaptureEditor::returnToSelect() {
 }
 
 QRectF CaptureEditor::scrollPillRect() const {
+  // A clean window capture is not in output coordinates, so its selection
+  // cannot become a scrolling region on the screen.
   if (phase_ != Phase::Edit || !hasLiveScreen() || dragging_ ||
-      capturePending_ || busy_)
+      capturePending_ || busy_ ||
+      (handedImage_ && editedMode_ == CaptureMode::Window))
     return {};
   const QRectF image = editImageRect();
   if (image.isEmpty())
