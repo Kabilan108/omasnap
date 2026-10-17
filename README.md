@@ -529,7 +529,10 @@ Hover a pin to reveal its controls and use its keyboard shortcuts. **Edit** and
 top-right; the drag handle, file-path button, and folder button sit at the top-left.
 Icon buttons show a short hint inside the card. Pins do not take keyboard focus when
 they appear; hovering a pin gives it the keyboard, and moving the pointer away hands
-the keyboard back to the focused window. Opening a pin for annotation keeps the pin in place and
+the keyboard back to the focused window. Niri hands the keyboard only to layers on its
+active output: with `focus-follows-mouse` enabled the pointer activates the pin's
+output as it crosses; without it, click the card once before using a shortcut on a pin
+that sits on another output. Opening a pin for annotation keeps the pin in place and
 gives focus to the editor. One `Esc` dismisses the editor and updates that same pin,
 including any text being typed. Reopening it restores the editable layers and undo
 history. `P` / `Ctrl+P` in that editor returns to the existing pin too.
