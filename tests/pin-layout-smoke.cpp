@@ -1,11 +1,10 @@
-/** @fileoverview Tests stacked pin slots and compositor dispatch strings. */
+/** @fileoverview Tests pinned-surface layout helpers. */
 #include "pin-layout-smoke.hpp"
 
 #include "card-stack.hpp"
 #include "pin-layout.hpp"
 #include "cli-path.hpp"
 #include <QCommandLineParser>
-#include <QJsonArray>
 #include <QImage>
 #include <QRectF>
 #include <QPainter>
@@ -98,30 +97,24 @@ bool runPinLayoutSmoke(QString &error) {
   // A bar may reserve any edge (or several). Insets are already logical
   // pixels even on a scaled monitor; both free drops and stacks respect them.
   struct BarCase {
-    QJsonArray reserved;
     QRect area;
     QPoint drop;
     QPoint restored;
     QPoint packed;
   };
   const QList<BarCase> bars{
-      {{36, 0, 0, 0}, {36, 0, 3036, 1728}, {-50, 500}, {50, 500}, {2858, 1601}},
-      {{0, 26, 0, 0}, {0, 26, 3072, 1702}, {500, 10}, {500, 40}, {2858, 1601}},
-      {{0, 0, 30, 0}, {0, 0, 3042, 1728}, {2900, 500}, {2828, 500}, {2828, 1601}},
-      {{0, 0, 0, 40}, {0, 0, 3072, 1688}, {500, 1640}, {500, 1561}, {2858, 1561}},
-      {{36, 26, 30, 40}, {36, 26, 3006, 1662}, {-50, 1640}, {50, 1561}, {2828, 1561}},
-      {{0, 0, 0, 0}, {0, 0, 3072, 1728}, {500, -50}, {500, 14}, {2858, 1601}}};
-  QJsonObject monitor{{QStringLiteral("width"), 6144},
-                      {QStringLiteral("height"), 3456},
-                      {QStringLiteral("scale"), 2}};
+      {{36, 0, 3036, 1728}, {-50, 500}, {50, 500}, {2858, 1601}},
+      {{0, 26, 3072, 1702}, {500, 10}, {500, 40}, {2858, 1601}},
+      {{0, 0, 3042, 1728}, {2900, 500}, {2828, 500}, {2828, 1601}},
+      {{0, 0, 3072, 1688}, {500, 1640}, {500, 1561}, {2858, 1561}},
+      {{36, 26, 3006, 1662}, {-50, 1640}, {50, 1561}, {2828, 1561}},
+      {{0, 0, 3072, 1728}, {500, -50}, {500, 14}, {2858, 1601}}};
   for (const auto &bar : bars) {
-    monitor.insert(QStringLiteral("reserved"), bar.reserved);
-    const QRect area = pinMonitorWorkArea(monitor);
+    const QRect area = bar.area;
     const auto packed = pinPackedPosition({}, area.size(), preview, 10, 14);
-    if (area != bar.area ||
-        pinVisibleRect(QRect(bar.drop, preview), area, 14) != QRect(bar.restored, preview) ||
+    if (pinVisibleRect(QRect(bar.drop, preview), area, 14) != QRect(bar.restored, preview) ||
         !packed || *packed + area.topLeft() != bar.packed ||
-        pinFrameSize(pinMonitorGeometry(monitor).size()) != preview) {
+        pinFrameSize(QSize(3072, 1728)) != preview) {
       error = QStringLiteral("Pin placement ignored a reserved edge or changed its aspect ratio");
       return false;
     }
@@ -460,23 +453,6 @@ bool runPinLayoutSmoke(QString &error) {
     return false;
   }
 
-  // The dispatch expressions are Lua for a Lua-configured Hyprland;
-  // a placement that silently does nothing is exactly the failure these guard.
-  const QString title = QStringLiteral("0x1234");
-  if (pinFloatDispatch(title) !=
-          QStringLiteral(
-              "hl.dsp.window.float({ window = \"address:0x1234\" })") ||
-      pinPinDispatch(title) !=
-          QStringLiteral(
-              "hl.dsp.window.pin({ window = \"address:0x1234\" })") ||
-      pinMoveDispatch(title, 120, 40) !=
-          QStringLiteral("hl.dsp.window.move({ x = 120, y = 40, relative = "
-                         "false, window = \"address:0x1234\" })") ||
-      pinFocusDispatch(title) !=
-          QStringLiteral("hl.dsp.focus({ window = \"address:0x1234\" })")) {
-    error = QStringLiteral("Hyprland dispatch expressions were malformed");
-    return false;
-  }
   QVector<QRect> occupied;
   const QSize wide(2400, 110);
   for (int index = 0; index < 21; ++index) {
@@ -498,20 +474,37 @@ bool runPinLayoutSmoke(QString &error) {
     error = QStringLiteral("A full or undersized output returned an unsafe slot");
     return false;
   }
-  QJsonObject rotated{{QStringLiteral("x"), -1080},
-                             {QStringLiteral("y"), 200},
-                             {QStringLiteral("width"), 3840},
-                             {QStringLiteral("height"), 2160},
-                             {QStringLiteral("scale"), 2},
-                             {QStringLiteral("transform"), 1}};
-  if (pinMonitorGeometry(rotated) != QRect(-1080, 200, 1080, 1920) ||
-      pinMonitorWorkArea(rotated) != pinMonitorGeometry(rotated)) {
-    error = QStringLiteral("Pin monitor geometry lost origin, scale or transform");
+  const QPoint firstDrag = pinPositionFromGlobalPointer(
+      QPoint(446, 306), QPoint(100, 50), QPoint(50, 40));
+  const QPoint secondDrag = pinPositionFromGlobalPointer(
+      QPoint(456, 316), QPoint(100, 50), QPoint(50, 40));
+  if (firstDrag != QPoint(296, 216) || secondDrag != QPoint(306, 226)) {
+    error = QStringLiteral("Pin drag did not follow the global pointer");
     return false;
   }
-  rotated.insert(QStringLiteral("reserved"), QJsonArray{40, 30, 20, 10});
-  if (pinMonitorWorkArea(rotated) != QRect(-1040, 230, 1020, 1880)) {
-    error = QStringLiteral("Reserved edges were scaled or rotated a second time");
+
+  const QSize slotScreen(400, 300);
+  const QSize slotPin(100, 80);
+  if (pinSlotPosition(slotScreen, slotPin, slotPin, 0, 10, 14) != QPoint(286, 206) ||
+      pinSlotPosition(slotScreen, slotPin, slotPin, 1, 10, 14) != QPoint(286, 116) ||
+      pinSlotPosition(slotScreen, slotPin, slotPin, 2, 10, 14) != QPoint(286, 26) ||
+      pinSlotPosition(slotScreen, slotPin, slotPin, 3, 10, 14) != QPoint(176, 206)) {
+    error = QStringLiteral("Pinned slots did not stack and wrap correctly");
+    return false;
+  }
+
+  const QRect bounds(QPoint(10, 20), QSize(400, 300));
+  if (clampPinGeometry(QRect(380, 290, 100, 80), bounds) != QRect(310, 240, 100, 80) ||
+      clampPinGeometry(QRect(-20, 0, 100, 80), bounds) != QRect(10, 20, 100, 80)) {
+    error = QStringLiteral("Pinned geometry was not clamped to the screen");
+    return false;
+  }
+
+  const QStringList outputs{QStringLiteral("eDP-1"), QStringLiteral("DP-4")};
+  if (pinOutputIndex(QStringLiteral("DP-4"), outputs) != 1 ||
+      pinOutputIndex(QStringLiteral("missing"), outputs) != -1 ||
+      pinOutputIndex(QString(), outputs) != -1) {
+    error = QStringLiteral("Pinned output selection did not use an exact name");
     return false;
   }
   return true;

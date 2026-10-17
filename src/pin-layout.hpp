@@ -1,14 +1,14 @@
-/** @fileoverview Provides pure pinned-window packing and dispatch helpers. */
+/** @fileoverview Provides pure pinned-surface layout helpers. */
 #pragma once
 
 #include <QPair>
 #include <QImage>
-#include <QJsonObject>
 #include <optional>
 #include <QPoint>
 #include <QRect>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QTransform>
 
@@ -75,22 +75,22 @@ pinInsertionPlan(QVector<QPair<QString, QRect>> column,
 [[nodiscard]] bool pinInColumn(const QRect &rect, const QSize &screenSize,
                                int margin, int gap);
 
-/// Dispatch expressions for a Lua-configured Hyprland, which evaluates the
-/// dispatch argument as Lua; the classic dispatcher grammar parses as an
-/// expression there and fails while reporting success.
-[[nodiscard]] QString pinFloatDispatch(const QString &address);
-[[nodiscard]] QString pinPinDispatch(const QString &address);
-[[nodiscard]] QString pinMoveDispatch(const QString &address, int x, int y);
-[[nodiscard]] QString pinRaiseDispatch(const QString &address);
-[[nodiscard]] QString pinFocusDispatch(const QString &address);
-/// Global logical geometry, including scale and quarter-turn transforms.
-[[nodiscard]] QRect pinMonitorGeometry(const QJsonObject &monitor);
-/// Global logical geometry excluding reserved space for bars on any edge.
-[[nodiscard]] QRect pinMonitorWorkArea(const QJsonObject &monitor);
-
 /// Control geometry shared by painting and hit testing: labeled actions in
 /// the center, drag/path/folder at top-left, and pin/close at top-right.
 [[nodiscard]] QRectF pinControlRect(const QSize &frame, int index);
 
 /** Hover tips for icon controls; labeled actions and unknown controls are empty. */
 [[nodiscard]] QString pinControlTip(int index, bool kept = false);
+
+/// Pin position on an output for a drag that started `pressOffset` into it.
+[[nodiscard]] QPoint pinPositionFromGlobalPointer(const QPoint &globalPointer,
+                                                  const QPoint &screenOrigin,
+                                                  const QPoint &pressOffset);
+/// Bottom-right slot `index`, stacking upward and wrapping into columns.
+[[nodiscard]] QPoint pinSlotPosition(const QSize &screenSize, const QSize &pinSize,
+                                     const QSize &slotSize, int index, int gap,
+                                     int margin);
+[[nodiscard]] QRect clampPinGeometry(const QRect &pin, const QRect &bounds);
+/// Index of the exactly named output, or -1 when it is empty or missing.
+[[nodiscard]] int pinOutputIndex(const QString &requestedOutput,
+                                 const QStringList &availableOutputs);

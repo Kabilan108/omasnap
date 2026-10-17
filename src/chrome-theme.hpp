@@ -2,13 +2,8 @@
 
 #include <QBrush>
 #include <QColor>
-#include <QFileSystemWatcher>
-#include <QFutureWatcher>
-#include <QObject>
 #include <QRectF>
 #include <QString>
-#include <QStringList>
-#include <QTimer>
 #include <QVector>
 
 // Theme snapshots are public value data shared between the worker and GUI.
@@ -20,8 +15,8 @@ struct ChromeThemeBorder {
   bool operator==(const ChromeThemeBorder &) const = default;
 };
 
-// Explicit, usable defaults also cover missing or malformed theme data. These
-// are paint values only; Qt's platform theme and the chrome fonts stay pinned.
+// Explicit paint values only; Qt's platform theme and the chrome fonts stay
+// pinned.
 struct ChromeTheme {
   QColor surface{18, 18, 22};
   QColor foreground{245, 245, 247};
@@ -55,38 +50,8 @@ struct ChromeTheme {
 };
 // NOLINTEND(misc-non-private-member-variables-in-classes)
 
-[[nodiscard]] QString chromeThemeDirectory();
-// Disk reads and parsing belong on a worker, never in a paint/input handler.
-[[nodiscard]] ChromeTheme loadChromeTheme(const QString &directory);
 /// Shared paint values. No file access or initialization in the paint path.
 [[nodiscard]] const ChromeTheme &chromeTheme();
 [[nodiscard]] QColor chromeAlpha(QColor color, int alpha);
-/// Called once by main; workers load the palette and watch live theme changes.
-/// An explicit directory also allows isolated theme integration tests.
-void initializeChromeTheme(const QString &directory = chromeThemeDirectory());
-
-class ChromeThemeWatcher final : public QObject {
-  Q_OBJECT
-public:
-  explicit ChromeThemeWatcher(const QString &directory,
-                              QObject *parent = nullptr);
-  [[nodiscard]] const ChromeTheme &theme() const { return theme_; }
-
-signals:
-  void changed();
-
-private:
-  struct Snapshot {
-    ChromeTheme theme;
-    QStringList paths;
-  };
-  void reload();
-  QString directory_;
-  ChromeTheme theme_;
-  QFileSystemWatcher files_;
-  QTimer debounce_;
-  QFutureWatcher<Snapshot> loader_;
-  bool loading_ = false;
-  bool pending_ = false;
-  bool rearm_ = false;
-};
+/// Called once by main to install the chrome's Qt style sheets.
+void initializeChromeTheme();

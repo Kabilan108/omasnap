@@ -1,5 +1,3 @@
-#include <QCommandLineParser>
-#include <QCommandLineOption>
 /** @fileoverview Resolves local image targets accepted by the command line. */
 #include "cli-path.hpp"
 
@@ -49,11 +47,10 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
     }
   }
   parser.setApplicationDescription(QStringLiteral(
-      "Native Wayland screenshot and annotation overlay for Hyprland and "
-      "Omarchy.\n"
+      "Native Wayland screenshot and annotation overlay for Niri.\n"
       "\n"
-      "With no target, drag for a region, click a window, or click open "
-      "space for\nthe full focused monitor. Captures save, copy to the clipboard, "
+      "With no target, drag for a region, click for the full focused output, "
+      "or press\nSpace for the focused window. Captures save, copy to the clipboard, "
       "and show a\npreview for 10 seconds; use its pin button or Ctrl+P to keep "
       "it, or Edit to annotate.\n"
       "Use --editor to edit before output.\n"
@@ -75,7 +72,7 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
       QStringLiteral("Start with the entire focused monitor selected."));
   const QCommandLineOption windowOption(
       {QStringLiteral("capture-window"), QStringLiteral("capture-windows")},
-      QStringLiteral("Start in window selection mode."));
+      QStringLiteral("Capture the focused Niri window."));
   const QCommandLineOption regionOption(
       QStringLiteral("capture-region"),
       QStringLiteral("Start in freeform region selection mode."));
@@ -103,7 +100,7 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
   parser.addOption(clipboardOption);
   const QCommandLineOption pinOption(
       QStringLiteral("pin"),
-      QStringLiteral("Show an image as a floating window pinned on every workspace."),
+      QStringLiteral("Show an image as a pinned always-visible layer."),
       QStringLiteral("path"));
   parser.addOption(pinOption);
   QCommandLineOption previewOption(
@@ -118,10 +115,10 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
                      "editor between the two."),
       QStringLiteral("mode"));
   parser.addOption(editorOption);
-  QCommandLineOption handoffMonitor(QStringLiteral("handoff-monitor"), QString(),
-                                     QStringLiteral("name"));
-  handoffMonitor.setFlags(QCommandLineOption::HiddenFromHelp);
-  parser.addOption(handoffMonitor);
+  QCommandLineOption outputOption(QStringLiteral("output"), QString(),
+                                  QStringLiteral("name"));
+  outputOption.setFlags(QCommandLineOption::HiddenFromHelp);
+  parser.addOption(outputOption);
   QCommandLineOption handoffToken(QStringLiteral("handoff-token"), QString(),
                                   QStringLiteral("token"));
   handoffToken.setFlags(QCommandLineOption::HiddenFromHelp);
@@ -130,6 +127,10 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
                                  QStringLiteral("path"));
   pinDocument.setFlags(QCommandLineOption::HiddenFromHelp);
   parser.addOption(pinDocument);
+  QCommandLineOption savedNotification(QStringLiteral("saved-notification"),
+                                       QString(), QStringLiteral("path"));
+  savedNotification.setFlags(QCommandLineOption::HiddenFromHelp);
+  parser.addOption(savedNotification);
   const QCommandLineOption scrollOption(
       QStringLiteral("scroll"),
       QStringLiteral("Capture a scrolling region and stitch it into one tall "

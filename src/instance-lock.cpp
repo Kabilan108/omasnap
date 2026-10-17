@@ -11,7 +11,9 @@
 
 namespace {
 /** How long a starting editor waits for the running instance to let go. */
-constexpr int kHandoverTimeoutMs = 2000;
+// A terminating editor drains clean-window capture so Niri's temporary
+// clipboard ownership is restored before the lock is released.
+constexpr int kHandoverTimeoutMs = 60000;
 /** Poll interval while waiting for the lock file to disappear. */
 constexpr int kHandoverPollMs = 20;
 

@@ -4,5 +4,6 @@
 
 enum class PinLifetime { Timed, Persistent };
 
-/** Runs a detached pinned-image window using the current Omasnap process. */
-[[nodiscard]] int runPinnedCapture(const QString &path, PinLifetime lifetime);
+/** Runs a detached pinned-image layer on the requested Wayland output. */
+[[nodiscard]] int runPinnedCapture(const QString &path, PinLifetime lifetime,
+                                   const QString &outputName);

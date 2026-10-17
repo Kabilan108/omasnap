@@ -9,7 +9,6 @@
 #include "cli-path.hpp"
 #include "clipboard-smoke.hpp"
 #include "png-smoke.hpp"
-#include "chrome-theme-smoke.hpp"
 #include "cut-mapping-smoke.hpp"
 #include "cut-smoke.hpp"
 #include "editor.hpp"
@@ -27,7 +26,6 @@
 #include "stitch.hpp"
 #include "stroke-smoothing-smoke.hpp"
 #include "pin-lifecycle-smoke.hpp"
-#include "pin-interaction-smoke.hpp"
 #include "pin-file.hpp"
 #include "overlay-dismissal.hpp"
 #include "text-band.hpp"
@@ -161,8 +159,7 @@ QRectF nativeSourceRect(const QSize &source, const QSize &preview,
 }
 
 CaptureData selectHoleCapture(const QSize &preview, const QSize &sourceSize,
-                              qreal scale, const QRectF &previewHole,
-                              const QVector<WindowTarget> &windows = {}) {
+                              qreal scale, const QRectF &previewHole) {
   CaptureData capture;
   capture.monitor.geometry = QRect(QPoint(), preview);
   capture.monitor.pixelSize = sourceSize;
@@ -170,7 +167,6 @@ CaptureData selectHoleCapture(const QSize &preview, const QSize &sourceSize,
   capture.source = QImage(sourceSize, QImage::Format_ARGB32_Premultiplied);
   capture.source.fill(kSelectBackdropFill);
   capture.previewSize = preview;
-  capture.windows = windows;
   QPainter painter(&capture.source);
   painter.setCompositionMode(QPainter::CompositionMode_Source);
   painter.fillRect(nativeSourceRect(sourceSize, preview, previewHole),
@@ -331,48 +327,6 @@ bool runSelectUndimHoleCheck(QString &error) {
       return false;
   }
 
-  // Window hover: window.rect is preview space. destHole is mapped to widget.
-  // Old clip uses window.rect on the widget, so the mapped interior stays dim.
-  {
-    const QSize preview(800, 600);
-    const QSize sourceSize(800, 600);
-    const QSize widget(400, 300);
-    const QRect windowRect(160, 120, 400, 320);
-    CaptureData capture = selectHoleCapture(
-        preview, sourceSize, 1.0, QRectF(windowRect),
-        {{{windowRect}, QStringLiteral("w1"), QStringLiteral("one")}});
-    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Window);
-    prepareSelectEditor(editor, widget);
-    QTest::mouseMove(&editor, QPoint(100, 90), 20);
-    QApplication::processEvents();
-    const QImage ui = editor.grab().toImage();
-    if (!expectUndimmedHole(ui, editor, capture.source, widget, 1.0,
-                            QRectF(windowRect), QPointF(100, 90), QPointF(20, 200),
-                            QStringLiteral("Mismatched window"), error))
-      return false;
-  }
-
-  // 90/270-style aspect swap: widget landscape, preview portrait.
-  {
-    const QSize preview(600, 800);
-    const QSize sourceSize(600, 800);
-    const QSize widget(800, 600);
-    const QRect windowRect(80, 200, 200, 280);
-    CaptureData capture = selectHoleCapture(
-        preview, sourceSize, 1.0, QRectF(windowRect),
-        {{{windowRect}, QStringLiteral("w1"), QStringLiteral("rotated")}});
-    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Window);
-    prepareSelectEditor(editor, widget);
-    QTest::mouseMove(&editor, QPoint(320, 180), 20);
-    QApplication::processEvents();
-    const QImage ui = editor.grab().toImage();
-    if (!expectUndimmedHole(ui, editor, capture.source, widget, 1.0,
-                            QRectF(windowRect), QPointF(320, 180),
-                            QPointF(40, 400),
-                            QStringLiteral("Transform window"), error))
-      return false;
-  }
-
   {
     const QSize preview(600, 800);
     const QSize sourceSize(600, 800);
@@ -390,7 +344,7 @@ bool runSelectUndimHoleCheck(QString &error) {
       return false;
   }
 
-  // Combined mandatory grab: scale 2.0 and widget != preview, window + region.
+  // Combined mandatory grab: scale 2.0 and widget != preview.
   {
     const QSize preview(800, 600);
     const QSize sourceSize(1600, 1200);
@@ -406,26 +360,6 @@ bool runSelectUndimHoleCheck(QString &error) {
     if (!expectUndimmedHole(ui, editor, capture.source, widget, 2.0, previewHole,
                             QPointF(100, 180), QPointF(20, 200),
                             QStringLiteral("Scale 2.0 mismatched region"), error))
-      return false;
-  }
-
-  {
-    const QSize preview(800, 600);
-    const QSize sourceSize(1600, 1200);
-    const QSize widget(400, 300);
-    const QRect windowRect(160, 120, 400, 320);
-    CaptureData capture = selectHoleCapture(
-        preview, sourceSize, 2.0, QRectF(windowRect),
-        {{{windowRect}, QStringLiteral("w1"), QStringLiteral("hidpi")}});
-    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Window);
-    prepareSelectEditor(editor, widget);
-    QTest::mouseMove(&editor, QPoint(100, 90), 20);
-    QApplication::processEvents();
-    const QImage ui = editor.grab().toImage();
-    if (!expectUndimmedHole(ui, editor, capture.source, widget, 2.0,
-                            QRectF(windowRect), QPointF(100, 90), QPointF(20, 200),
-                            QStringLiteral("Scale 2.0 mismatched window"),
-                            error))
       return false;
   }
 
@@ -445,8 +379,6 @@ bool runMeasurementReadoutCheck(QString &error) {
   capture.source = QImage(1600, 1200, QImage::Format_ARGB32_Premultiplied);
   capture.source.fill(QColor(QStringLiteral("#6480a0")));
   capture.previewSize = QSize(800, 600);
-  capture.windows = {
-      {{80, 80, 300, 220}, QStringLiteral("1"), QStringLiteral("first")}};
 
   CaptureEditor editor(capture);
   // The readout is overlay-only, so this check never needs the working
@@ -485,8 +417,7 @@ bool runMeasurementReadoutCheck(QString &error) {
     return false;
   }
 
-  for (const auto mode : {CaptureEditor::CaptureMode::Window,
-                          CaptureEditor::CaptureMode::Smart,
+  for (const auto mode : {CaptureEditor::CaptureMode::Smart,
                           CaptureEditor::CaptureMode::Scroll}) {
     CaptureEditor windowEditor(capture, mode);
     windowEditor.setSuppressSnapshots(true);
@@ -497,9 +428,7 @@ bool runMeasurementReadoutCheck(QString &error) {
                             windowEditor.mapToGlobal(QPoint(200, 150)));
     QApplication::sendEvent(&windowEditor, &windowEnter);
     QApplication::processEvents();
-    const QString wanted = mode == CaptureEditor::CaptureMode::Scroll
-                               ? QStringLiteral("400, 300")
-                               : QStringLiteral("600 × 440");
+    const QString wanted = QStringLiteral("400, 300");
     if (windowEditor.measurementText() != wanted) {
       error = QStringLiteral("Pointer entry readout was \"%1\", expected \"%2\"")
                   .arg(windowEditor.measurementText(), wanted);
@@ -623,9 +552,6 @@ bool runSmartSelectionSmoke(QApplication &application, QString &error) {
   capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
   capture.source.fill(QColor(QStringLiteral("#406080")));
   capture.previewSize = capture.source.size();
-  const QRect windowRect(80, 80, 300, 220);
-  capture.windows = {{windowRect, QStringLiteral("w1"), QStringLiteral("first"),
-                      QStringLiteral("test-app")}};
 
   const auto prepare = [&application](CaptureEditor &editor) {
     editor.setSuppressSnapshots(true);
@@ -634,42 +560,31 @@ bool runSmartSelectionSmoke(QApplication &application, QString &error) {
     application.processEvents();
   };
 
-  CaptureEditor windowEditor(capture, CaptureEditor::CaptureMode::Smart);
-  prepare(windowEditor);
-  if (!windowEditor.smartModeForTest()) {
+  CaptureEditor smartEditor(capture, CaptureEditor::CaptureMode::Smart);
+  prepare(smartEditor);
+  if (!smartEditor.smartModeForTest()) {
     error = QStringLiteral("Smart capture did not enter inference mode");
     return false;
   }
-  if (!windowEditor.statusForTest().isEmpty()) {
+  if (!smartEditor.statusForTest().isEmpty()) {
     error = QStringLiteral("Smart capture still showed an instruction pill");
     return false;
   }
-  QTest::mouseMove(&windowEditor, QPoint(200, 160), 20);
-  application.processEvents();
-  const QImage windowUi = windowEditor.grab().toImage();
   const QColor sourceColor(QStringLiteral("#406080"));
-  if (!colorNear(grabLogicalPixel(windowUi, windowEditor, QPointF(300, 250)),
-                 sourceColor, 2) ||
-      !colorNear(grabLogicalPixel(windowUi, windowEditor, QPointF(700, 350)),
-                 dimmedSelectColor(sourceColor), 2)) {
-    error = QStringLiteral(
-        "Smart window target was not the only lit part of the monitor");
-    return false;
-  }
   // A few pixels of pointer jitter still count as the old picker's bare click
   // (area below 20 px²), rather than producing an accidental tiny crop.
-  QTest::mousePress(&windowEditor, Qt::LeftButton, Qt::NoModifier,
+  QTest::mousePress(&smartEditor, Qt::LeftButton, Qt::NoModifier,
                     QPoint(200, 160));
-  QTest::mouseMove(&windowEditor, QPoint(203, 163), 20);
-  QTest::mouseRelease(&windowEditor, Qt::LeftButton, Qt::NoModifier,
+  QTest::mouseMove(&smartEditor, QPoint(203, 163), 20);
+  QTest::mouseRelease(&smartEditor, Qt::LeftButton, Qt::NoModifier,
                       QPoint(203, 163));
   application.processEvents();
-  if (!windowEditor.editingForTest() ||
-      windowEditor.currentSelection() != QRectF(windowRect)) {
-    error = QStringLiteral("Smart click did not select the window underneath");
+  if (!smartEditor.editingForTest() ||
+      smartEditor.currentSelection() != QRectF(QPointF(), capture.previewSize)) {
+    error = QStringLiteral("Smart jitter click did not select the full output");
     return false;
   }
-  windowEditor.close();
+  smartEditor.close();
 
   CaptureEditor fullscreenEditor(capture, CaptureEditor::CaptureMode::Smart);
   prepare(fullscreenEditor);
@@ -692,7 +607,7 @@ bool runSmartSelectionSmoke(QApplication &application, QString &error) {
       fullscreenEditor.currentSelection() !=
           QRectF(QPointF(), capture.previewSize)) {
     error = QStringLiteral(
-        "Smart click outside a window did not select the full monitor");
+        "Smart click did not select the full output");
     return false;
   }
   fullscreenEditor.close();
@@ -1707,11 +1622,6 @@ bool runPointerDamageRegionCheck(QString &error) {
   capture.previewSize = capture.monitor.pixelSize;
   capture.source = QImage(32, 18, QImage::Format_ARGB32_Premultiplied);
   capture.source.fill(QColor(QStringLiteral("#182030")));
-  capture.windows = {
-      {QRect(1000, 700, 800, 600), QStringLiteral("w1"),
-       QStringLiteral("one"), QStringLiteral("test-app")},
-      {QRect(3000, 1600, 900, 700), QStringLiteral("w2"),
-       QStringLiteral("two"), QStringLiteral("test-app")}};
 
   CaptureEditor editor(capture);
   editor.resize(capture.previewSize);
@@ -1732,21 +1642,6 @@ bool runPointerDamageRegionCheck(QString &error) {
     return false;
   }
 
-  CaptureEditor smart(capture, CaptureEditor::CaptureMode::Smart);
-  smart.resize(capture.previewSize);
-  const QRegion betweenWindows = smart.windowHoverDamageForTest(0, 1);
-  if (!betweenWindows.contains(QPoint(998, 1000)) ||
-      !betweenWindows.contains(QPoint(2998, 1900)) ||
-      betweenWindows == QRegion(smart.rect())) {
-    error = QStringLiteral(
-        "Smart window damage did not cover both antialiased outlines locally");
-    return false;
-  }
-  if (smart.windowHoverDamageForTest(0, -1) != QRegion(smart.rect())) {
-    error = QStringLiteral(
-        "Smart window/fullscreen transition did not repaint the monitor");
-    return false;
-  }
   return true;
 }
 
@@ -2555,8 +2450,6 @@ bool runPostCaptureChecks(QString &error, bool autosave) {
   capture.source = QImage(1600, 1200, QImage::Format_ARGB32_Premultiplied);
   capture.source.fill(QColor(QStringLiteral("#345678")));
   capture.previewSize = {800, 600};
-  capture.windows = {{QRect(100, 100, 300, 200), QStringLiteral("window"),
-                       QStringLiteral("fixture"), QStringLiteral("test")}};
 
   const QByteArray oldConfigHome = qgetenv("XDG_CONFIG_HOME");
   const QByteArray oldSaveDir = qgetenv("OMASNAP_SCREENSHOT_DIR");
@@ -2575,8 +2468,8 @@ bool runPostCaptureChecks(QString &error, bool autosave) {
         config.write("[output]\nautosave = false\n") < 0)
       return false;
   }
-  for (const Mode mode : {Mode::Region, Mode::Smart, Mode::Window,
-                          Mode::Fullscreen, Mode::Scroll}) {
+  for (const Mode mode : {Mode::Region, Mode::Smart, Mode::Fullscreen,
+                          Mode::Scroll}) {
     CaptureEditor editor(capture, mode, QuickOutputMode::CopyAndPreview);
     // Hold publication independently of machine/PNG speed. Preview completion
     // must not wait on history, while an immediate Edit must wait for its source.
@@ -2599,7 +2492,7 @@ bool runPostCaptureChecks(QString &error, bool autosave) {
       QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, {100, 100});
       QTest::mouseMove(&editor, {400, 300});
       QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, {400, 300});
-    } else if (mode == Mode::Smart || mode == Mode::Window) {
+    } else if (mode == Mode::Smart) {
       QTest::mouseMove(&editor, {200, 180});
       QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, {200, 180});
     } else if (mode == Mode::Scroll) {
@@ -2607,7 +2500,8 @@ bool runPostCaptureChecks(QString &error, bool autosave) {
       stitched.fill(Qt::cyan);
       editor.adoptStitchedForTest(stitched);
     }
-    const QSize logicalSize = mode == Mode::Fullscreen ? QSize(800, 600)
+    const QSize logicalSize = mode == Mode::Fullscreen || mode == Mode::Smart
+                                  ? QSize(800, 600)
                               : mode == Mode::Scroll ? QSize(400, 1200)
                                                      : QSize(300, 200);
     if (editor.currentSelection().size().toSize() != logicalSize) {
@@ -2746,8 +2640,8 @@ bool runPostCaptureChecks(QString &error, bool autosave) {
   // Both picker shortcuts keep every capture kind in the editor without
   // copying or launching a preview. Holding the key must not toggle it off.
   for (const Qt::Key key : {Qt::Key_E, Qt::Key_A}) {
-    for (const Mode mode : {Mode::Region, Mode::Smart, Mode::Window,
-                            Mode::Fullscreen, Mode::Scroll}) {
+    for (const Mode mode : {Mode::Region, Mode::Smart, Mode::Fullscreen,
+                            Mode::Scroll}) {
       const QImage clipboardBefore(clipboard);
       CaptureEditor editor(capture, mode == Mode::Fullscreen ? Mode::Smart : mode,
                            QuickOutputMode::CopyAndPreview);
@@ -2766,7 +2660,7 @@ bool runPostCaptureChecks(QString &error, bool autosave) {
         QTest::mousePress(&editor, Qt::LeftButton, Qt::NoModifier, {100, 100});
         QTest::mouseMove(&editor, {400, 300});
         QTest::mouseRelease(&editor, Qt::LeftButton, Qt::NoModifier, {400, 300});
-      } else if (mode == Mode::Smart || mode == Mode::Window) {
+      } else if (mode == Mode::Smart) {
         QTest::mouseMove(&editor, {200, 180});
         QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, {200, 180});
       } else if (mode == Mode::Fullscreen) {
@@ -3176,27 +3070,6 @@ bool runScreenshotFilenameChecks(QString &error) {
                        QString::fromUtf8(slug));
       return false;
     }
-  }
-
-  const QVector<WindowTarget> windows = {
-      {QRect(0, 0, 400, 300), QStringLiteral("w1"), QStringLiteral("Browser"),
-       QStringLiteral("firefox")},
-      {QRect(400, 0, 400, 300), QStringLiteral("w2"), QStringLiteral("Shell"),
-       QStringLiteral("Alacritty")},
-  };
-  if (dominantAppClass(windows, QRectF(250, 50, 200, 100)) !=
-      QStringLiteral("firefox")) {
-    error = QStringLiteral("dominantAppClass did not pick the larger overlap");
-    return false;
-  }
-  if (dominantAppClass(windows, QRectF(350, 50, 200, 100)) !=
-      QStringLiteral("Alacritty")) {
-    error = QStringLiteral("dominantAppClass did not pick the larger overlap");
-    return false;
-  }
-  if (!dominantAppClass(windows, QRectF(0, 400, 100, 100)).isEmpty()) {
-    error = QStringLiteral("dominantAppClass named an app with no overlap");
-    return false;
   }
 
   const QDateTime when(QDate(2026, 8, 23), QTime(14, 5, 9));
@@ -4485,7 +4358,7 @@ bool runEditorHandoffRoundTrip(QApplication &application, QString &error) {
   if (editor.isVisible() || path.isEmpty() || token.size() != 32 ||
       launchArguments != QStringList{QStringLiteral("--file"), path,
                                       QStringLiteral("--editor"), QStringLiteral("window"),
-                                      QStringLiteral("--handoff-monitor"), QStringLiteral("TEST"),
+                                      QStringLiteral("--output"), QStringLiteral("TEST"),
                                       QStringLiteral("--handoff-token"), token}) {
     error = QStringLiteral("W did not launch the window presentation asynchronously");
     return false;
@@ -5625,32 +5498,6 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
     return false;
   }
 
-  const auto writeExecutable = [](const QString &path,
-                                  const QByteArray &contents) {
-    QFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || file.write(contents) != contents.size())
-      return false;
-    file.close();
-    return QFile::setPermissions(
-        path, QFileDevice::ReadOwner | QFileDevice::WriteOwner |
-                  QFileDevice::ExeOwner);
-  };
-  const QString fakeHyprctl = QDir(commands.path()).filePath(QStringLiteral("hyprctl"));
-  const QByteArray hyprctlScript =
-      QByteArrayLiteral("#!/usr/bin/env bash\n"
-                        "if [[ \"$1 $2\" == \"monitors -j\" ]]; then\n"
-                        "  printf '%s\\n' "
-                        "'[{\"focused\":true,\"scale\":1,\"width\":320,"
-                        "\"height\":240,\"transform\":0,\"name\":\"TEST\","
-                        "\"x\":0,\"y\":0,\"activeWorkspace\":{\"id\":7}}]'\n"
-                        "else\n"
-                        "  printf '[]\\n'\n"
-                        "fi\n");
-  if (!writeExecutable(fakeHyprctl, hyprctlScript)) {
-    error = QStringLiteral("Could not create async capture commands");
-    return false;
-  }
-
   QImage source(320, 240, QImage::Format_RGB32);
   source.fill(QColor(QStringLiteral("#28405c")));
   const QString sourcePath =
@@ -5681,7 +5528,7 @@ bool runAsyncCaptureRegionSmoke(QApplication &application, QString &error) {
                      ready = ok;
                      captureError = message;
                    });
-  editor.startCapture(CaptureEditor::CaptureMode::Region, true);
+  editor.startCapture(CaptureEditor::CaptureMode::Region);
 
   QElapsedTimer timer;
   timer.start();
@@ -5838,7 +5685,7 @@ bool runSpotlightWheelSmoke(QApplication &application, QString &error) {
   return true;
 }
 
-/** Window crop, undo/redo replay, persist+reload, and redaction order. */
+/** Undo/redo replay, persist+reload, and redaction order. */
 bool runOpLogSmoke(QApplication &application, QString &error) {
   CaptureData capture;
   capture.monitor.name = QStringLiteral("TEST");
@@ -5854,25 +5701,6 @@ bool runOpLogSmoke(QApplication &application, QString &error) {
     painter.fillRect(QRect(200, 200, 100, 60), secret);
   }
   capture.previewSize = capture.source.size();
-  capture.windows = {
-      {{80, 80, 300, 220}, QStringLiteral("w1"), QStringLiteral("first")}};
-
-  {
-    const QImage original = capture.source.copy();
-    CaptureEditor editor(capture, CaptureEditor::CaptureMode::Window);
-    editor.resize(800, 600);
-    editor.show();
-    application.processEvents();
-    QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier, QPoint(200, 160));
-    application.processEvents();
-    if (editor.captureData().source != original ||
-        editor.currentSelection() != QRectF(80, 80, 300, 220) ||
-        editor.operationIndex() < 1) {
-      error = QStringLiteral("Window pick recaptured or did not crop the source");
-      return false;
-    }
-    editor.close();
-  }
 
   CaptureEditor editor(capture, CaptureEditor::CaptureMode::Fullscreen);
   editor.resize(800, 600);
@@ -6238,64 +6066,18 @@ bool runRecentsShelfSmoke(QApplication &application, QString &error) {
   return true;
 }
 
-/**
- * omarchy-notification-send treats everything after --exec as the click
- * command's argv and runs it without shell parsing. The saved-capture
- * notification must therefore put --exec last and pass the program and the
- * file URL as separate words; a quoted single string or a trailing -t would
- * make the click try to run a program that does not exist.
- */
+/** Image-less notifications go straight to notify-send as separate words. */
 bool runNotificationArgvCheck(QString &error) {
   const QStringList plain =
       captureNotificationArguments(QStringLiteral("Screenshot copied"));
-  if (plain.contains(QStringLiteral("--exec")) ||
-      plain.contains(QStringLiteral("--image"))) {
-    error = QStringLiteral("image-less notification carried --exec/--image");
-    return false;
-  }
-  if (plain.last() != QStringLiteral("Screenshot copied") ||
-      plain.indexOf(QStringLiteral("-t")) < 0 ||
-      plain.at(plain.indexOf(QStringLiteral("-t")) + 1) !=
-          QStringLiteral("4500")) {
-    error = QStringLiteral("image-less notification argv is wrong: %1")
+  const QStringList expected{
+      QStringLiteral("--app-name"),    QStringLiteral("omasnap"),
+      QStringLiteral("--expire-time"), QStringLiteral("4500"),
+      QStringLiteral("--icon"),        QStringLiteral("camera-photo"),
+      QStringLiteral("Omasnap"),       QStringLiteral("Screenshot copied")};
+  if (plain != expected) {
+    error = QStringLiteral("notify-send argv is wrong: %1")
                 .arg(plain.join(QStringLiteral(" | ")));
-    return false;
-  }
-
-  const QString imagePath = QStringLiteral("/tmp/it's a/shot 1.png");
-  const QStringList saved = captureNotificationArguments(
-      QStringLiteral("Screenshot saved"), imagePath);
-  const qsizetype exec = saved.indexOf(QStringLiteral("--exec"));
-  if (exec < 0 || saved.size() != exec + 3) {
-    error = QStringLiteral("--exec must be followed by exactly program and "
-                           "URL, got: %1")
-                .arg(saved.join(QStringLiteral(" | ")));
-    return false;
-  }
-  const QString &program = saved.at(exec + 1);
-  const QString &url = saved.at(exec + 2);
-  if (program.isEmpty() || program.contains(QStringLiteral("'")) ||
-      program.contains(QStringLiteral(" ")) ||
-      !program.endsWith(QStringLiteral("omasnap"))) {
-    error = QStringLiteral("click program is not a bare omasnap path: %1")
-                .arg(program);
-    return false;
-  }
-  if (url != QUrl::fromLocalFile(imagePath).toString(QUrl::FullyEncoded) ||
-      !url.startsWith(QStringLiteral("file:///")) ||
-      QUrl(url).toLocalFile() != imagePath) {
-    error = QStringLiteral("click URL does not round-trip the image: %1")
-                .arg(url);
-    return false;
-  }
-  const qsizetype timeout = saved.indexOf(QStringLiteral("-t"));
-  if (timeout < 0 || timeout > exec) {
-    error = QStringLiteral("-t must precede --exec");
-    return false;
-  }
-  const qsizetype image = saved.indexOf(QStringLiteral("--image"));
-  if (image < 0 || saved.at(image + 1) != imagePath) {
-    error = QStringLiteral("--image does not carry the saved path");
     return false;
   }
   sendCaptureNotification(QStringLiteral("smoke"));
@@ -11104,7 +10886,7 @@ bool runViewportZoomSmoke(QApplication &application, QString &error) {
 }
 
 /** Smart capture has no mode switcher: the former top strip is ordinary
- *  selection space and Space does not change capture behavior. Scroll capture
+ *  selection space, and Space without a focused window stays selecting. Scroll capture
  *  remains reachable through S/--scroll and the editor's explicit button. */
 bool runCaptureControlsSmoke(QApplication &application, QString &error) {
   CaptureData capture;
@@ -11115,8 +10897,6 @@ bool runCaptureControlsSmoke(QApplication &application, QString &error) {
   capture.source = QImage(800, 600, QImage::Format_ARGB32_Premultiplied);
   capture.source.fill(QColor(QStringLiteral("#182030")));
   capture.previewSize = capture.source.size();
-  capture.windows = {{QRect(100, 100, 300, 200), QStringLiteral("w1"),
-                      QStringLiteral("One"), QStringLiteral("firefox")}};
 
   CaptureEditor editor(capture, CaptureEditor::CaptureMode::Smart);
   editor.resize(800, 600);
@@ -11125,8 +10905,8 @@ bool runCaptureControlsSmoke(QApplication &application, QString &error) {
   QTest::keyClick(&editor, Qt::Key_Space);
   application.processEvents();
   if (!editor.smartModeForTest() || !editor.selectingForTest() ||
-      editor.windowModeForTest() || editor.scrollModeForTest()) {
-    error = QStringLiteral("Space still changed the smart capture mode");
+      editor.scrollModeForTest()) {
+    error = QStringLiteral("Space without a focused window changed the smart capture mode");
     return false;
   }
   const QPoint formerSwitcher(400, 18);
@@ -12194,8 +11974,6 @@ bool runArrowStyleSmoke(QApplication &application, QString &error) {
 
 
 int main(int argc, char **argv) {
-  if (qEnvironmentVariableIsSet(kPinSmokeEditorChild))
-    return 0;
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
       qEnvironmentVariable(kInstanceLockHolderVariable);
@@ -12240,19 +12018,9 @@ int main(int argc, char **argv) {
   if (!smokeShelf.isValid())
     return 18;
   qputenv("OMASNAP_RECENT_DIR", smokeShelf.path().toUtf8());
-  // Outputs notify through omarchy-notification-send. Answer those with a
-  // no-op so a run on a desktop does not post notifications for temporary
-  // PNGs that are gone before the daemon loads them.
-  QTemporaryDir quietCommands;
-  QFile notifier(QDir(quietCommands.path())
-                     .filePath(QStringLiteral("omarchy-notification-send")));
-  if (!quietCommands.isValid() || !notifier.open(QIODevice::WriteOnly) ||
-      notifier.write("#!/bin/sh\n") < 0 ||
-      !notifier.setPermissions(QFileDevice::ReadOwner |
-                               QFileDevice::ExeOwner))
-    return 226;
-  notifier.close();
-  qputenv("PATH", quietCommands.path().toUtf8() + ':' + qgetenv("PATH"));
+  // The saved-notification helper re-executes the current binary. In this
+  // test executable that would recursively launch the entire smoke suite.
+  qputenv("OMASNAP_DISABLE_NOTIFICATIONS", QByteArrayLiteral("1"));
 
   // Live output capture against a real compositor (the smoke's own Wayland
   // connection; Qt's platform does not matter): open a session on the named
@@ -12538,10 +12306,6 @@ int main(int argc, char **argv) {
   if (!runPinExpirySmoke(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 211;
-  }
-  if (!runPinInteractionSmoke(snapshotError)) {
-    qWarning().noquote() << snapshotError;
-    return 212;
   }
   if (!runSpotlightAndSampleChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -12853,9 +12617,6 @@ int main(int argc, char **argv) {
                      QStringLiteral("Native Qt capture editor"));
   }
   capture.previewSize = capture.source.size();
-  capture.windows = {
-      {{80, 80, 300, 220}, QStringLiteral("1"), QStringLiteral("first")},
-      {{420, 120, 300, 320}, QStringLiteral("2"), QStringLiteral("second")}};
 
   if (!runCrashSnapshotChecks(capture, snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -12945,8 +12706,6 @@ int main(int argc, char **argv) {
       return 75;
   }
   QDir(savedRoot).removeRecursively();
-  QImage hoverUi;
-  QImage keyboardWindowUi;
 
   {
     CaptureData cropCapture;
@@ -12973,29 +12732,6 @@ int main(int argc, char **argv) {
       return 93;
     cropEditor.close();
     QFile::remove(snapshotPath);
-  }
-
-  {
-    CaptureEditor windowNavigationEditor(
-        capture, CaptureEditor::CaptureMode::Window);
-    windowNavigationEditor.resize(800, 600);
-    windowNavigationEditor.show();
-    application.processEvents();
-    QTest::mouseMove(&windowNavigationEditor, QPoint(200, 160), 20);
-    application.processEvents();
-    hoverUi = windowNavigationEditor.grab().toImage();
-    if (hoverUi.pixelColor(200, 160) !=
-        capture.source.pixelColor(200, 160))
-      return 7;
-    QTest::keyClick(&windowNavigationEditor, Qt::Key_Right, Qt::MetaModifier);
-    application.processEvents();
-    keyboardWindowUi = windowNavigationEditor.grab().toImage();
-    if (keyboardWindowUi.pixelColor(500, 200) !=
-            capture.source.pixelColor(500, 200) ||
-        keyboardWindowUi.pixelColor(200, 160) ==
-            capture.source.pixelColor(200, 160))
-      return 8;
-    windowNavigationEditor.close();
   }
 
   CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
@@ -13241,10 +12977,7 @@ int main(int argc, char **argv) {
   application.processEvents();
   if (editor.cursor().shape() != Qt::PointingHandCursor)
     return 12;
-  if (!editor.grab().save(outputRoot + QStringLiteral("-ui.png"), "PNG") ||
-      !hoverUi.save(outputRoot + QStringLiteral("-window-hover.png"), "PNG") ||
-      !keyboardWindowUi.save(
-          outputRoot + QStringLiteral("-window-keyboard.png"), "PNG"))
+  if (!editor.grab().save(outputRoot + QStringLiteral("-ui.png"), "PNG"))
     return 2;
 
   {
@@ -13410,36 +13143,6 @@ int main(int argc, char **argv) {
       !compactToolbarUi.save(
           outputRoot + QStringLiteral("-compact-toolbar.png"), "PNG"))
     return 83;
-  CaptureEditor windowModeEditor(capture, CaptureEditor::CaptureMode::Window);
-  windowModeEditor.resize(800, 600);
-  windowModeEditor.show();
-  application.processEvents();
-  if (!windowModeEditor.grab().save(
-          outputRoot + QStringLiteral("-window-mode.png"), "PNG"))
-    return 36;
-
-  CaptureData windowPickCapture = capture;
-  const QImage originalSource = windowPickCapture.source.copy();
-  CaptureEditor windowPickEditor(windowPickCapture,
-                                 CaptureEditor::CaptureMode::Window);
-  windowPickEditor.resize(800, 600);
-  windowPickEditor.show();
-  application.processEvents();
-  QTest::mouseClick(&windowPickEditor, Qt::LeftButton, Qt::NoModifier,
-                    QPoint(200, 160));
-  application.processEvents();
-  const QImage windowCrop = windowPickEditor.renderCurrentOutput();
-  const QImage expectedCrop = renderCapture(
-      capture, QRectF(80, 80, 300, 220), {}, BackgroundStyle::None);
-  if (windowPickEditor.captureData().source != originalSource ||
-      windowPickEditor.currentSelection() != QRectF(80, 80, 300, 220) ||
-      windowCrop.convertToFormat(QImage::Format_ARGB32) !=
-          expectedCrop.convertToFormat(QImage::Format_ARGB32) ||
-      !windowPickEditor.grab().save(
-          outputRoot + QStringLiteral("-window-pick-crop.png"), "PNG"))
-    return 63;
-  windowPickEditor.close();
-
   CaptureData nativePreviewCapture = capture;
   nativePreviewCapture.monitor.scale = 2.0;
   nativePreviewCapture.monitor.pixelSize = {1600, 1200};
@@ -13800,18 +13503,12 @@ int main(int argc, char **argv) {
            .contains(QStringLiteral("OCR smoke test 42")))
     return 5;
   const QByteArray savedOmasnapLangs = qgetenv("OMASNAP_OCR_LANGS");
-  const QByteArray savedOmarchyLangs = qgetenv("OMARCHY_OCR_LANGS");
   qputenv("OMASNAP_OCR_LANGS", "");
-  qputenv("OMARCHY_OCR_LANGS", "eng");
   const QString fallbackOcr = recognizeText(ocrImage, ocrError);
   if (savedOmasnapLangs.isEmpty())
     qunsetenv("OMASNAP_OCR_LANGS");
   else
     qputenv("OMASNAP_OCR_LANGS", savedOmasnapLangs);
-  if (savedOmarchyLangs.isEmpty())
-    qunsetenv("OMARCHY_OCR_LANGS");
-  else
-    qputenv("OMARCHY_OCR_LANGS", savedOmarchyLangs);
   if (!fallbackOcr.contains(QStringLiteral("OCR smoke test 42")))
     return 65;
   // Tesseract's OpenMP pool spins on every core for no gain on a screenshot:
@@ -13937,10 +13634,6 @@ int main(int argc, char **argv) {
   if (!runInstanceLockSmoke(instanceError)) {
     qWarning().noquote() << instanceError;
     return 85;
-  }
-  if (!runChromeThemeSmoke(outputRoot, snapshotError)) {
-    qWarning().noquote() << snapshotError;
-    return 140;
   }
   return 0;
 }

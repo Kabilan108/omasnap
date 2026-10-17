@@ -12,9 +12,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
-#include <QGuiApplication>
 #include <QObject>
-#include <QProcess>
 #include <QPromise>
 #include <QString>
 #include <QTimer>
@@ -22,30 +20,6 @@
 #include <QtTypes>
 #include <QtLogging>
 #include <QtConcurrent/QtConcurrentRun>
-
-namespace {
-void prepareSaveAsWindow() {
-  // The overlay has no xdg-shell parent for its chooser. Without a rule,
-  // Hyprland tiles the independent dialog and rearranges the user's windows.
-  // Register before mapping, on the same worker that prepares the filename.
-  QProcess process;
-  process.start(QStringLiteral("hyprctl"),
-                {QStringLiteral("eval"),
-                 QStringLiteral("hl.window_rule({ name = \"omasnap-save-as\", "
-                                "match = { class = \"^omasnap$\", "
-                                "title = \"^Save screenshot as$\" }, "
-                                "float = true, center = true, opacity = 1 })")});
-  if (!process.waitForFinished(500)) {
-    process.kill();
-    process.waitForFinished(500);
-    qWarning("Could not configure the floating Save As window");
-  } else if (process.exitStatus() != QProcess::NormalExit ||
-             process.exitCode() != 0 ||
-             process.readAllStandardOutput().contains("error")) {
-    qWarning("Could not configure the floating Save As window");
-  }
-}
-} // namespace
 
 void CaptureEditor::cancelSaveAs() {
   // QObject stays alive after close(), and destruction can drain queued events.
@@ -70,8 +44,7 @@ void CaptureEditor::saveAs() {
   saveAsActive_ = true;
   const quint64 request = ++saveAsRequest_;
   setStatus(QStringLiteral("Choosing a save destination…"));
-  const QString appSlug =
-      appFilenameSlug(dominantAppClass(capture_.windows, selection_));
+  const QString appSlug = appFilenameSlug(capture_.appId);
   auto *watcher = new QFutureWatcher<QString>(this);
   connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, request] {
     const QString suggested = watcher->result();
@@ -79,10 +52,7 @@ void CaptureEditor::saveAs() {
     if (request == saveAsRequest_)
       showSaveAsDialog(suggested);
   });
-  const bool wayland = QGuiApplication::platformName() == QStringLiteral("wayland");
-  watcher->setFuture(QtConcurrent::run([appSlug, directory = saveAsDirectory_, wayland] {
-    if (wayland)
-      prepareSaveAsWindow();
+  watcher->setFuture(QtConcurrent::run([appSlug, directory = saveAsDirectory_] {
     const QString suggested = suggestedScreenshotPath(appSlug);
     return directory.isEmpty()
                ? suggested
@@ -118,7 +88,7 @@ void CaptureEditor::showSaveAsDialog(const QString &suggested) {
                              ? dialog->selectedFiles().value(0)
                              : QString();
     // The chooser's xdg-shell unmap and modal focus teardown must complete
-    // before the exclusive layer returns, otherwise Hyprland can hand focus
+    // before the exclusive layer returns, otherwise the compositor can hand focus
     // back to the underlying client after the overlay has already mapped.
     connect(dialog, &QObject::destroyed, this, [this, path, request] {
       QTimer::singleShot(0, this, [this, path, request] {
@@ -196,7 +166,8 @@ void CaptureEditor::saveAsToPath(const QString &path) {
        boundary = canvasBoundaryMode_, backdrop = customBackdrop_,
        source = pristineSource_, log = currentOperationLog(),
        previous = editingRecent_, document = pinDocument_,
-       launcher = processLauncher_, path](QPromise<QString> &completion) {
+       launcher = processLauncher_, outputName = presentationOutputName(),
+       path](QPromise<QString> &completion) {
     RecentSnapWriter recent(log.recentId);
     const QImage image = renderCapture(capture, selection, annotations,
                                        background, shadow, boundary, backdrop);
@@ -204,7 +175,7 @@ void CaptureEditor::saveAsToPath(const QString &path) {
     if (savePngFile(image, path, error)) {
       const QString preview = launchPinnedCapture(
           image, renderedCaptureLogicalSize(capture, image.size()), false,
-          PinLifetime::Timed, error, launcher, log.recentId, path);
+          PinLifetime::Timed, error, launcher, log.recentId, path, outputName);
       if (!preview.isEmpty()) {
         if (document)
           document->finishSavedPreview(log, path);

@@ -76,11 +76,15 @@ public:
   /**
    * Kicks off the monitor pixel capture in the background. The overlay stays
    * interactive (showing a "Capturing…" state) until it lands, then emits
-   * captureReady. Safe to call once, before entering the event loop. Window
-   * discovery runs alongside the grab and is skipped when `includeWindows` is
-   * false, for callers that never show the overlay.
+   * captureReady. Safe to call once, before entering the event loop.
    */
-  void startCapture(CaptureMode mode, bool includeWindows);
+  void startCapture(CaptureMode mode);
+  /** Captures the regular Niri window focused beneath the layer overlay. */
+  void captureFocusedNiriWindow();
+  /** Retains the focused-window response obtained before the layer mapped. */
+  void setFocusedWindowTarget(QByteArray windowJson) {
+    focusedWindowJson_ = std::move(windowJson);
+  }
   /**
    * Blocks until the in-flight snapshot persistence has drained, letting the
    * event loop run meanwhile. Returns whether the last write succeeded.
@@ -389,10 +393,6 @@ public:
   [[nodiscard]] QRegion pointerMotionRegionForTest(const QPointF &point) const {
     return pointerMotionRegion(point);
   }
-  [[nodiscard]] QRegion windowHoverDamageForTest(int oldIndex,
-                                                  int newIndex) const {
-    return windowHoverDamage(oldIndex, newIndex);
-  }
   /// Whether the selection chrome is currently stepped back for an adjustment.
   /// Test accessor.
   [[nodiscard]] bool selectionFadedForTest() const {
@@ -405,9 +405,7 @@ public:
     return customColorPickerOpen_;
   }
   [[nodiscard]] bool shapeMenuOpenForTest() const { return shapeMenuOpen_; }
-  /// Whether window selection is active in the select phase. Test accessor.
-  [[nodiscard]] bool windowModeForTest() const { return windowMode_; }
-  /// Whether clicks are inferred as window/fullscreen while drags stay areas.
+  /// Whether clicks select the full output while drags stay areas.
   [[nodiscard]] bool smartModeForTest() const { return smartMode_; }
   /// The aspect a dragged area is held to, as Tab cycles it. Test accessor.
   [[nodiscard]] QString regionAspectLabelForTest() const {
@@ -548,8 +546,9 @@ private:
   [[nodiscard]] QPointF sourcePoint(const QPointF &logicalPoint) const;
   [[nodiscard]] QRectF mapWidgetToPreview(const QRectF &widgetRect) const;
   [[nodiscard]] QRectF mapPreviewToWidget(const QRectF &previewRect) const;
-  [[nodiscard]] int windowAt(const QPointF &position) const;
-  [[nodiscard]] int windowInDirection(int current, int key) const;
+  /// The output a pin or replacement editor opens on: the windowed editor's
+  /// current screen, else the captured output.
+  [[nodiscard]] QString presentationOutputName() const;
   /// Toolbar buttons laid out left to right in their logical groups
   /// (history, style, tools, actions). When `groupDividers` is non-null, the
   /// midpoint x of each gap between groups is appended to it, in widget
@@ -576,11 +575,10 @@ private:
   /// last one; Shift+Enter always adds a line's room.
   void beginText(const QPointF &point, int annotationIndex = -1,
                  int lineCapacity = 1);
-  void chooseWindow(int index);
   void setScrollMode(bool enabled);
   void selectFullscreen();
   /// Back from the editor to the select phase: the op log is dropped and the
-  /// frozen screen is offered again for a new region or window.
+  /// frozen screen is offered again for a new region.
   void returnToSelect();
   void dismissEditor(bool remember = true);
   [[nodiscard]] OperationLog currentOperationLog() const;
@@ -657,7 +655,6 @@ private:
   void cycleBackground();
   void replayLog();
   void redoEdit();
-  void selectWindowInDirection(int key);
   friend bool runSaveAsSmoke(QString &error);
   void cancelSaveAs();
   void restoreSaveAsFocus();
@@ -713,7 +710,6 @@ private:
   /** Pixels repainted when the live canvas changes between two states. */
   [[nodiscard]] QRegion liveCanvasDamage(const LiveCanvas &before,
                                          const LiveCanvas &after) const;
-  [[nodiscard]] QRegion windowHoverDamage(int oldIndex, int newIndex) const;
   void queuePointerRepaint(const QRegion &damage);
   void toggleShapeFill();
   void toggleTextBackground();
@@ -831,10 +827,8 @@ private:
   qreal cutBandHi_ = 0.0;
   qreal cutDragRatio_ = 1.0;
   qreal cutDragOriginOffset_ = 0.0;
-  /// The default picker: a drag is a region; a click is the window under the
-  /// pointer, or the whole monitor when no window is there.
+  /// The default picker: a drag is a region; a click is the whole output.
   bool smartMode_ = false;
-  bool windowMode_ = false;
   /// Index into the region aspects Tab cycles: free, 1:1, 3:4, 16:9.
   int regionAspect_ = 0;
   BackgroundStyle backgroundStyle_ = BackgroundStyle::None;
@@ -858,7 +852,6 @@ private:
   QPointF shapeIntentOrigin_;
   QPointF textSizeIntentOrigin_;
   bool usingCustomColor_ = false;
-  int hoveredWindow_ = -1;
   int colorIndex_ = 0;
   PaletteConfig paletteConfig_ = defaultPaletteConfig();
   QColor customColor_;
@@ -918,6 +911,8 @@ private:
     QString error;
   };
   QFutureWatcher<CaptureJob> captureWatcher_;
+  QFutureWatcher<CaptureJob> windowCaptureWatcher_;
+  QByteArray focusedWindowJson_;
   bool capturePending_ = false;
   bool captureStarted_ = false;
   bool firstPaintReported_ = false;

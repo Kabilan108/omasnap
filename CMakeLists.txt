@@ -10,12 +10,16 @@ find_package(LayerShellQt REQUIRED)
 pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
 pkg_check_modules(Libdeflate REQUIRED IMPORTED_TARGET libdeflate)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
+pkg_get_variable(WAYLAND_PROTOCOLS_DIR wayland-protocols pkgdatadir)
+if(NOT WAYLAND_PROTOCOLS_DIR)
+  message(FATAL_ERROR "wayland-protocols was not found")
+endif()
 
 set(PROTOCOL_XMLS
   # ext-image-capture-source references this interface even for output-only use.
-  /usr/share/wayland-protocols/staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml
-  /usr/share/wayland-protocols/staging/ext-image-capture-source/ext-image-capture-source-v1.xml
-  /usr/share/wayland-protocols/staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml
+  ${WAYLAND_PROTOCOLS_DIR}/staging/ext-foreign-toplevel-list/ext-foreign-toplevel-list-v1.xml
+  ${WAYLAND_PROTOCOLS_DIR}/staging/ext-image-capture-source/ext-image-capture-source-v1.xml
+  ${WAYLAND_PROTOCOLS_DIR}/staging/ext-image-copy-capture/ext-image-copy-capture-v1.xml
   ${CMAKE_CURRENT_SOURCE_DIR}/protocols/wlr-virtual-pointer-unstable-v1.xml
 )
 set(PROTOCOL_SOURCES)
@@ -147,6 +151,7 @@ target_link_libraries(omasnap-core PUBLIC
 qt_add_executable(omasnap src/main.cpp src/pin.cpp src/pin.hpp)
 target_compile_options(omasnap PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_definitions(omasnap PRIVATE OMASNAP_VERSION="${PROJECT_VERSION}")
+set_target_properties(omasnap PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE)
 target_link_libraries(omasnap PRIVATE omasnap-core)
 target_precompile_headers(omasnap REUSE_FROM omasnap-core)
 
@@ -154,8 +159,6 @@ if(BUILD_TESTING)
 qt_add_executable(omasnap-smoke
   tests/scroll-focus-smoke.cpp
   tests/scroll-focus-smoke.hpp
-  tests/chrome-theme-smoke.cpp
-  tests/chrome-theme-smoke.hpp
   tests/editor-smoke.cpp
   tests/recent-persistence-smoke.cpp
   tests/recent-persistence-smoke.hpp
@@ -189,8 +192,6 @@ qt_add_executable(omasnap-smoke
   tests/surface-capture-smoke.hpp
   tests/pin-lifecycle-smoke.cpp
   tests/pin-lifecycle-smoke.hpp
-  tests/pin-interaction-smoke.cpp
-  tests/pin-interaction-smoke.hpp
   tests/pin-layout-smoke.cpp
   tests/pin-layout-smoke.hpp
   src/stitch.cpp
@@ -232,6 +233,10 @@ install(TARGETS omasnap
 install(FILES assets/OFL.txt
   DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/omasnap"
   RENAME Neucha-OFL.txt
+)
+install(FILES LICENSE
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/omasnap"
+  RENAME MIT.txt
 )
 install(FILES assets/JetBrainsMono-OFL.txt assets/Inter-OFL.txt assets/Lucide-ISC.txt
   DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/omasnap"

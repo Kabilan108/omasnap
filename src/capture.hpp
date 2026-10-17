@@ -19,6 +19,7 @@
 #include <QVector>
 
 class QFont;
+class QByteArray;
 class QPainter;
 class QProcess;
 
@@ -27,15 +28,7 @@ struct MonitorInfo {
   QRect geometry;
   QSize pixelSize;
   qreal scale = 1.0;
-  int workspaceId = 0;
-};
-
-struct WindowTarget {
-  QRect rect;
-  QString stableId;
-  QString title;
-  /** Hyprland window class (e.g. `firefox`, `org.gnome.Nautilus`). */
-  QString appClass;
+  qint64 workspaceId = -1;
 };
 
 struct CaptureData {
@@ -43,7 +36,8 @@ struct CaptureData {
   QImage source;
   /** Logical size the native source image is presented at. */
   QSize previewSize;
-  QVector<WindowTarget> windows;
+  /** Niri app_id of a clean window capture; empty for output captures. */
+  QString appId;
   /** Loaded documents retain their exact pixel dimensions during rendering. */
   bool preserveSourceResolution = false;
 };
@@ -167,24 +161,25 @@ enum class AnnotationLayer { Redaction, Default };
 /** Bundled annotation font at Omasnap's logical text size. */
 [[nodiscard]] QFont annotationTextFont(qreal size,
                                        TextFont textFont = TextFont::Neucha);
-/**
- * Discovers the focused monitor (name, geometry, scale). Fast: only one
- * `hyprctl monitors` call. Safe to call on the main thread to position the
- * overlay after the pixel capture has already produced a frozen frame.
- */
+/** Discovers the focused Niri output and its active workspace. */
 [[nodiscard]] bool probeFocusedMonitor(MonitorInfo &monitor, QString &error);
+/** Names the Niri output that currently has keyboard focus. */
+[[nodiscard]] bool queryFocusedOutputName(QString &name, QString &error);
 /**
- * Captures the focused monitor's pixels onto the given monitor, and its window
- * list when `includeWindows` is set. Window discovery runs alongside the screen
- * grab, so callers that never show the overlay should skip it. Pure I/O and
- * image work (no GUI objects): safe on any thread.
+ * Captures the given output's pixels. Pure I/O and image work (no GUI
+ * objects): safe on any thread.
  */
 [[nodiscard]] bool captureMonitorPixels(const MonitorInfo &monitor,
-                                        CaptureData &capture,
-                                        bool includeWindows, QString &error);
+                                        CaptureData &capture, QString &error);
 /** Convenience: probes the focused monitor, then captures its pixels. */
-[[nodiscard]] bool captureFocusedMonitor(CaptureData &capture,
-                                         bool includeWindows, QString &error);
+[[nodiscard]] bool captureFocusedMonitor(CaptureData &capture, QString &error);
+/** Queries the regular window focused before an exclusive layer is mapped. */
+[[nodiscard]] bool queryFocusedWindow(QByteArray &windowJson, QString &error);
+/** Uses Niri's focused-window query and screenshot action for a clean capture. */
+[[nodiscard]] bool captureFocusedWindow(CaptureData &capture, QString &error);
+/** Completes clean capture from Niri window JSON containing id and workspace_id. */
+[[nodiscard]] bool capturePickedWindow(const QByteArray &pickedJson,
+                                       CaptureData &capture, QString &error);
 /** Bounds of a text layer's glyph box, or of its readability pill when it
  *  has one; `start` is the baseline origin. */
 /// Narrowest wrap width worth producing; below this a line would be a sliver,
@@ -381,17 +376,11 @@ QImage applyRedactionsScaled(QImage image, const QVector<Annotation> &redactions
 /** Returns Omasnap's private runtime directory, or empty on failure. */
 [[nodiscard]] QString secureRuntimeDirectory();
 /**
- * Filename-safe token for a window class: lowercase, `[a-z0-9-]` only,
- * last segment of a reverse-DNS class, at most 24 characters. Empty when
+ * Filename-safe token for a Niri app_id: lowercase, `[a-z0-9-]` only,
+ * last segment of a reverse-DNS id, at most 24 characters. Empty when
  * nothing usable remains.
  */
-[[nodiscard]] QString appFilenameSlug(const QString &appClass);
-/**
- * Class of the window covering most of `selection` (preview coordinates),
- * or empty when no window overlaps it.
- */
-[[nodiscard]] QString dominantAppClass(const QVector<WindowTarget> &windows,
-                                       const QRectF &selection);
+[[nodiscard]] QString appFilenameSlug(const QString &appId);
 /** Suggested PNG destination from output config, without creating files.
  * Reads config: call on a worker. */
 [[nodiscard]] QString suggestedScreenshotPath(const QString &appSlug = {});
@@ -436,23 +425,23 @@ bool removeEditorHandoff(const QString &path, const QString &token);
                                       const QSize &logicalSize, QString &error,
                                       const QString &recentId = {},
                                       const QString &savedPath = {});
-/** Saves and launches a private pin, optionally copying the same PNG first.
- *  Call on a worker: encoding, clipboard verification and process launch block.
- *  Returns the owned snapshot path, or removes it on failure. */
+/** Saves and launches a private pin, optionally copying the same PNG first,
+ *  on `outputName` when set. Call on a worker: encoding, clipboard
+ *  verification and process launch block. Returns the owned snapshot path, or
+ *  removes it on failure. */
 [[nodiscard]] QString launchPinnedCapture(
     const QImage &image, const QSize &logicalSize, bool copy,
     PinLifetime lifetime, QString &error,
     const std::function<bool(const QString &, const QStringList &)> &launcher = {},
-    const QString &recentId = {}, const QString &savedPath = {});
+    const QString &recentId = {}, const QString &savedPath = {},
+    const QString &outputName = {});
 /** Atomically writes a lossless PNG into the private runtime directory. */
 [[nodiscard]] bool saveTemporarySnapshot(const QImage &image, QString path,
                                          QString &error);
 [[nodiscard]] QString recognizeText(const QImage &image, QString &error);
-/** Builds the omarchy-notification-send argv. With an image, the click command
- *  follows --exec as separate words (program, then file URL) and nothing else
- *  comes after it, since --exec consumes the rest of the line unparsed. */
-[[nodiscard]] QStringList
-captureNotificationArguments(const QString &message,
-                             const QString &imagePath = {});
+/** Builds the notify-send argv for a notification without an image. */
+[[nodiscard]] QStringList captureNotificationArguments(const QString &message);
+/** Notifies without an image directly. With an image, a detached
+ *  `omasnap --saved-notification` helper waits for the Edit action. */
 void sendCaptureNotification(const QString &message,
                              const QString &imagePath = {});
