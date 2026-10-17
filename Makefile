@@ -25,8 +25,7 @@ build: configure
 	$(CMAKE) --build $(BUILD_DIR) --parallel
 
 smoke: build
-	QT_QPA_PLATFORM=offscreen $(BUILD_DIR)/omasnap-smoke \
-		$(BUILD_DIR)/omasnap-smoke-output
+	QT_QPA_PLATFORM=offscreen $(BUILD_DIR)/omasnap-smoke
 
 lint: build
 	@set -eu; \
@@ -37,10 +36,9 @@ lint: build
 			"$$commands_dir/compile_commands.json"; \
 		sed -i 's/ -mno-direct-extern-access//g' \
 			"$$commands_dir/compile_commands.json"; \
-		for source in $(LINT_SOURCES); do \
+		printf '%s\n' $(LINT_SOURCES) | xargs -r -P "$$(nproc)" -n 1 \
 			"$(CLANG_TIDY)" -p "$$commands_dir" \
-				-checks="$(LINT_CHECKS)" -header-filter='.*' "$$source"; \
-		done; \
+			-checks="$(LINT_CHECKS)" -header-filter='.*'; \
 	else \
 		echo "make check: clang-tidy unavailable; skipping"; \
 	fi

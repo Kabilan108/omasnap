@@ -2,7 +2,6 @@
 #include "palette-config.hpp"
 
 #include <QSettings>
-#include <QStandardPaths>
 #include <QStringList>
 
 PaletteConfig defaultPaletteConfig() {
@@ -30,9 +29,4 @@ PaletteConfig loadPaletteConfig(const QString &filePath) {
   if (custom.isValid())
     config.custom = custom;
   return config;
-}
-
-QString defaultPaletteConfigPath() {
-  return QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) +
-         QStringLiteral("/omasnap/omasnap.conf");
 }

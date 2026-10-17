@@ -1,9 +1,54 @@
 #include "icons.hpp"
 
+#include "overlay-chrome.hpp"
+#include "capture.hpp"
+
 #include <QConicalGradient>
-#include <QFontDatabase>
 #include <QPainter>
 #include <QPainterPath>
+
+namespace {
+constexpr qreal kArrowIconWidth = 28.0;
+constexpr qreal kArrowIconLength = 100.0;
+constexpr qreal kArrowIconSize = 5.0;
+
+bool arrowStyleForAction(const QString &action, ArrowStyle &style) {
+  if (action == QStringLiteral("tool-arrow-standard"))
+    style = ArrowStyle::Standard;
+  else if (action == QStringLiteral("tool-arrow-pointy"))
+    style = ArrowStyle::Pointy;
+  else if (action == QStringLiteral("tool-arrow-curved"))
+    style = ArrowStyle::Curved;
+  else if (action == QStringLiteral("tool-arrow-double"))
+    style = ArrowStyle::Double;
+  else
+    return false;
+  return true;
+}
+
+void drawArrowStyleIcon(QPainter &painter, const QRectF &bounds,
+                        ArrowStyle style, const QColor &color) {
+  Annotation arrow;
+  arrow.kind = Annotation::Kind::Arrow;
+  arrow.start = QPointF(0.0, 0.0);
+  arrow.end = QPointF(kArrowIconLength, 0.0);
+  arrow.color = color;
+  arrow.size = kArrowIconSize;
+  arrow.arrowStyle = style;
+
+  const QRectF natural = arrowVisualBounds(arrow);
+  if (natural.isEmpty())
+    return;
+  // Width is the invariant across styles. A single uniform transform keeps
+  // every calibrated polygon, curve, tangent and head angle identical to the
+  // annotation renderer instead of stretching a separate toolbar sketch.
+  const qreal scale = kArrowIconWidth / natural.width();
+  painter.translate(bounds.center());
+  painter.scale(scale, scale);
+  painter.translate(-natural.center());
+  paintAnnotation(painter, arrow);
+}
+} // namespace
 
 void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
                      const QString &action, const QString &label,
@@ -15,10 +60,20 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
   }
 
   painter.save();
+  ArrowStyle arrowStyle = ArrowStyle::Standard;
+  if (arrowStyleForAction(action, arrowStyle)) {
+    drawArrowStyleIcon(painter, bounds, arrowStyle, color);
+    painter.restore();
+    return;
+  }
+
   constexpr qreal iconSize = 19.0;
-  painter.translate(bounds.center().x() - iconSize / 2.0,
-                    bounds.center().y() - iconSize / 2.0);
-  painter.scale(iconSize / 24.0, iconSize / 24.0);
+  const qreal iconWidth = iconSize;
+  const qreal iconHeight = iconSize;
+  constexpr qreal logicalWidth = 24.0;
+  painter.translate(bounds.center().x() - iconWidth / 2.0,
+                    bounds.center().y() - iconHeight / 2.0);
+  painter.scale(iconWidth / logicalWidth, iconHeight / 24.0);
   painter.setPen(QPen(color, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
   painter.setBrush(Qt::NoBrush);
 
@@ -30,10 +85,6 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
     pointer.lineTo(9, 21);
     pointer.closeSubpath();
     painter.drawPath(pointer);
-  } else if (action == QStringLiteral("tool-arrow")) {
-    painter.drawLine(QPointF(7, 17), QPointF(17, 7));
-    painter.drawLine(QPointF(7, 7), QPointF(17, 7));
-    painter.drawLine(QPointF(17, 7), QPointF(17, 17));
   } else if (action == QStringLiteral("tool-line")) {
     painter.drawLine(QPointF(5, 19), QPointF(19, 5));
   } else if (action == QStringLiteral("tool-freehand")) {
@@ -54,10 +105,7 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
     painter.drawEllipse(QPointF(10.5, 10.5), 2.3, 2.3);
   } else if (action == QStringLiteral("tool-marker")) {
     painter.drawEllipse(QPointF(12, 12), 8, 8);
-    QFont font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
-    font.setPixelSize(11);
-    font.setBold(true);
-    painter.setFont(font);
+    painter.setFont(chromeFont(11, true));
     painter.drawText(QRectF(4, 4, 16, 16), Qt::AlignCenter,
                      QStringLiteral("1"));
   } else if (action == QStringLiteral("tool-rectangle")) {
@@ -92,6 +140,12 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
     painter.drawRect(QRectF(5, 14.5, 14, 5.5));
     painter.setPen(QPen(color, 1.4, Qt::DashLine, Qt::FlatCap));
     painter.drawLine(QPointF(5, 12), QPointF(19, 12));
+  } else if (action == QStringLiteral("tool-cut-insert")) {
+    // Two image halves opening, plus in the gap (insert a band).
+    painter.drawRect(QRectF(5, 3, 14, 5));
+    painter.drawRect(QRectF(5, 16, 14, 5));
+    painter.drawLine(QPointF(12, 9.5), QPointF(12, 14.5));
+    painter.drawLine(QPointF(9.5, 12), QPointF(14.5, 12));
   } else if (action == QStringLiteral("tool-text")) {
     painter.drawLine(QPointF(5, 5), QPointF(19, 5));
     painter.drawLine(QPointF(12, 5), QPointF(12, 19));
@@ -210,6 +264,22 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
     link.lineTo(15, 17);
     painter.drawPath(link);
     painter.drawLine(QPointF(8, 12), QPointF(16, 12));
+  } else if (action == QStringLiteral("folder")) {
+    QPainterPath folder;
+    folder.moveTo(3, 10);
+    folder.lineTo(3, 6);
+    folder.quadTo(3, 4, 5, 4);
+    folder.lineTo(9, 4);
+    folder.lineTo(12, 7);
+    folder.lineTo(19, 7);
+    folder.quadTo(21, 7, 21, 9);
+    folder.moveTo(3, 10);
+    folder.lineTo(22, 10);
+    folder.lineTo(19, 20);
+    folder.lineTo(4, 20);
+    folder.quadTo(3, 20, 3, 18);
+    folder.closeSubpath();
+    painter.drawPath(folder);
   } else if (action == QStringLiteral("drag-handle")) {
     painter.setPen(Qt::NoPen);
     painter.setBrush(color);
@@ -228,9 +298,30 @@ void drawToolbarIcon(QPainter &painter, const QRectF &bounds,
     tray.lineTo(19, 18);
     painter.drawPath(tray);
   } else if (action == QStringLiteral("pin")) {
-    painter.drawRoundedRect(QRectF(8, 4, 8, 6), 2, 2);
-    painter.drawLine(QPointF(5, 10), QPointF(19, 10));
-    painter.drawLine(QPointF(12, 10), QPointF(12, 20));
+    // Lucide's pin, adapted to QPainterPath (ISC; assets/Lucide-ISC.txt).
+    // https://github.com/lucide-icons/lucide/blob/main/icons/pin.svg
+    painter.drawLine(QPointF(12, 17), QPointF(12, 22));
+    QPainterPath pin;
+    pin.moveTo(9, 10.76);
+    pin.cubicTo(8.9996, 11.5189, 8.5697, 12.2123, 7.89, 12.55);
+    pin.lineTo(6.11, 13.45);
+    pin.cubicTo(5.4303, 13.7877, 5.0004, 14.4811, 5, 15.24);
+    pin.lineTo(5, 16);
+    pin.arcTo(QRectF(5, 15, 2, 2), 180, 90);
+    pin.lineTo(18, 17);
+    pin.arcTo(QRectF(17, 15, 2, 2), 270, 90);
+    pin.lineTo(19, 15.24);
+    pin.cubicTo(18.9996, 14.4811, 18.5697, 13.7877, 17.89, 13.45);
+    pin.lineTo(16.11, 12.55);
+    pin.cubicTo(15.4303, 12.2123, 15.0004, 11.5189, 15, 10.76);
+    pin.lineTo(15, 7);
+    pin.arcTo(QRectF(15, 6, 2, 2), 180, -90);
+    pin.arcTo(QRectF(14, 2, 4, 4), 270, 180);
+    pin.lineTo(8, 2);
+    pin.arcTo(QRectF(6, 2, 4, 4), 90, 180);
+    pin.arcTo(QRectF(7, 6, 2, 2), 90, -90);
+    pin.closeSubpath();
+    painter.drawPath(pin);
   } else if (action == QStringLiteral("close")) {
     painter.drawLine(QPointF(6, 6), QPointF(18, 18));
     painter.drawLine(QPointF(18, 6), QPointF(6, 18));

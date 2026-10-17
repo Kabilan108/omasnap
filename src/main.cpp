@@ -1,27 +1,44 @@
+#include <QFutureWatcher>
+#include <QtConcurrent/QtConcurrentRun>
 #include "capture.hpp"
+#include "chrome-theme.hpp"
 #include "cli-path.hpp"
 #include "editor.hpp"
 #include "instance-lock.hpp"
+#include "output-config.hpp"
+#include "overlay-chrome.hpp"
 #include "pin.hpp"
+#include "pin-file.hpp"
+#include "recent-snaps.hpp"
+#include "startup-timing.hpp"
 
 #include <LayerShellQt/Window>
 
+
+#include <QFileInfo>
 #include <QImageReader>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
+#include <QTimer>
 #include <QApplication>
+
+#include <algorithm>
+#include <memory>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFile>
 #include <QGuiApplication>
 #include <QLockFile>
-#include <QProcess>
 #include <QScreen>
 #include <QSocketNotifier>
 #include <QUrl>
-#include <QTimer>
 #include <QWindow>
 
 #include <csignal>
+#include <optional>
 #include <cerrno>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -136,12 +153,40 @@ private:
 } // namespace
 
 int main(int argc, char **argv) {
+  startupTimingMark("entered main");
   QCoreApplication::setApplicationName(QStringLiteral("omasnap"));
   QCoreApplication::setApplicationVersion(QString::fromLatin1(OMASNAP_VERSION));
   QCoreApplication::setOrganizationName(QStringLiteral("Omasnap"));
-  qputenv("QT_WAYLAND_SHELL_INTEGRATION", "layer-shell");
+  // Resolve editor presentation before Qt consumes its own command-line flags.
+  QStringList rawArguments;
+  for (int index = 0; index < argc; ++index)
+    rawArguments.push_back(QString::fromLocal8Bit(argv[index]));
+  QCommandLineParser startupParser;
+  configureCaptureCommandLine(startupParser, true);
+  const bool startupParsed = startupParser.parse(rawArguments);
+  const bool windowedEditorProcess = startupParsed &&
+      windowedEditorRequested(startupParser, loadEditorWindowMode(defaultConfigPath()));
+  // Window::get below gives only the capture surface a layer-shell role.
+  // Dialogs and pinned windows keep Qt's normal xdg-shell integration.
+  qunsetenv("QT_WAYLAND_SHELL_INTEGRATION");
+  // A session-wide QT_QPA_PLATFORMTHEME=gtk3 loads the qgtk3 plugin, which initialises GTK inside this process
+  // (measured 81-112 ms of QApplication construction, plus ~20-24 MiB of
+  // RSS) for hand-painted chrome and Qt's own file chooser.
+  // Qt's built-in generic theme is all it needs, so select it by name
+  // (an empty value would let Qt pick a theme from XDG_CURRENT_DESKTOP
+  // instead). The chrome font is pinned in chromeFont() rather than taken
+  // from the theme. `-platformtheme gtk3` on the command line still
+  // overrides this for debugging.
+  qputenv("QT_QPA_PLATFORMTHEME", "generic");
   QGuiApplication::setDesktopFileName(QStringLiteral("omasnap"));
   QApplication application(argc, argv);
+  startupTimingMark("QApplication constructed");
+  // With the external desktop theme bypassed, Qt's default font would be
+  // generic "Sans Serif 9"; pin what the theme used to install before any
+  // widget is created, so painter/widget default-font text keeps its size and
+  // face.
+  QApplication::setFont(chromeDefaultFont());
+  initializeChromeTheme();
 
   // A stitched scroll capture (or any tall pinned image) exceeds Qt's default
   // 256 MB image-decode allocation limit; lift it so --file/--pin can open it.
@@ -149,114 +194,74 @@ int main(int argc, char **argv) {
   PosixSignalNotifier signalNotifier(&application);
 
   QCommandLineParser parser;
-  parser.setApplicationDescription(QStringLiteral(
-      "Native Wayland screenshot and annotation overlay for Niri.\n"
-      "\n"
-      "Only one capture overlay runs at a time. Starting omasnap again while "
-      "an\noverlay is open dismisses it: the running instance is asked to "
-      "quit and the\nnew process exits without capturing, so the same hotkey "
-      "opens and closes the\noverlay. Quick output (--copy, --save) dismisses "
-      "it the same way instead of\nscreenshotting the overlay. With --file (or "
-      "an image path) or --clipboard, the running\ninstance is stopped and "
-      "the editor opens on that image instead.\n"
-      "\n"
-      "Exit codes: 0 success, including dismissing a running overlay; 1 "
-      "capture,\nimage, or single-instance lock failure; 2 usage error."));
-  parser.addHelpOption();
-  parser.addVersionOption();
-  const QCommandLineOption fullscreenOption(
-      QStringLiteral("capture-fullscreen"),
-      QStringLiteral("Start with the entire focused monitor selected."));
-  const QCommandLineOption windowOption(
-      {QStringLiteral("capture-window"), QStringLiteral("capture-windows")},
-      QStringLiteral("Start in window selection mode."));
-  const QCommandLineOption regionOption(
-      QStringLiteral("capture-region"),
-      QStringLiteral("Start in freeform region selection mode (default)."));
-  parser.addOption(fullscreenOption);
-  parser.addOption(windowOption);
-  parser.addOption(regionOption);
-  const QCommandLineOption copyOption(
-      QStringLiteral("copy"),
-      QStringLiteral("Copy the capture directly without opening the editor."));
-  const QCommandLineOption saveOption(
-      QStringLiteral("save"),
-      QStringLiteral("Save the capture directly without opening the editor."));
-  parser.addOption(copyOption);
-  parser.addOption(saveOption);
-  const QCommandLineOption fileOption(
-      QStringLiteral("file"),
-      QStringLiteral("Open an existing image file in the annotation editor "
-                     "instead of capturing the screen."),
-      QStringLiteral("path"));
-  parser.addOption(fileOption);
-  const QCommandLineOption clipboardOption(
-      QStringLiteral("clipboard"),
-      QStringLiteral("Open the current clipboard image in the annotation "
-                     "editor instead of capturing the screen."));
-  parser.addOption(clipboardOption);
-  const QCommandLineOption pinOption(
-      QStringLiteral("pin"),
-      QStringLiteral("Show an image as a pinned always-visible layer."),
-      QStringLiteral("path"));
-  parser.addOption(pinOption);
-  QCommandLineOption outputOption(
-      QStringLiteral("output"), QString(), QStringLiteral("name"));
-  outputOption.setFlags(QCommandLineOption::HiddenFromHelp);
-  parser.addOption(outputOption);
-  const QCommandLineOption savedNotificationOption(
-      QStringLiteral("saved-notification"), QString(), QStringLiteral("path"));
-  parser.addOption(savedNotificationOption);
-  parser.addPositionalArgument(
-      QStringLiteral("target"),
-      QStringLiteral("Capture mode (smart, region, windows, fullscreen) or the "
-                     "path of an image file to edit."),
-      QStringLiteral("[target]"));
+  configureCaptureCommandLine(parser);
   parser.process(application);
+  startupTimingMark("command line parsed");
+
+  QString filePath = parser.value(QStringLiteral("file"));
+  const bool clipboardInput = parser.isSet(QStringLiteral("clipboard"));
+
+  const QString editorModeArg = parser.value(QStringLiteral("editor")).trimmed().toLower();
+  if (!editorModeArg.isEmpty() &&
+      editorModeArg != QStringLiteral("window") &&
+      editorModeArg != QStringLiteral("overlay")) {
+    qCritical() << "--editor takes window or overlay";
+    return 2;
+  }
+  const bool editorWindowMode =
+      editorModeArg == QStringLiteral("window") ||
+      (editorModeArg.isEmpty() && loadEditorWindowMode(defaultConfigPath()));
+
+  QuickOutputMode quickOutputMode = QuickOutputMode::None;
+  if (parser.isSet(QStringLiteral("copy")) && parser.isSet(QStringLiteral("save")))
+    quickOutputMode = QuickOutputMode::Both;
+  else if (parser.isSet(QStringLiteral("copy")))
+    quickOutputMode = QuickOutputMode::Copy;
+  else if (parser.isSet(QStringLiteral("save")))
+    quickOutputMode = QuickOutputMode::Save;
+
+  CaptureEditor::CaptureMode captureMode = CaptureEditor::CaptureMode::Smart;
+  int requestedModes = parser.isSet(QStringLiteral("capture-fullscreen")) +
+                       parser.isSet(QStringLiteral("capture-window")) + parser.isSet(QStringLiteral("capture-region")) +
+                       parser.isSet(QStringLiteral("scroll"));
+  if (parser.isSet(QStringLiteral("capture-fullscreen")))
+    captureMode = CaptureEditor::CaptureMode::Fullscreen;
+  else if (parser.isSet(QStringLiteral("capture-window")))
+    captureMode = CaptureEditor::CaptureMode::Window;
+  else if (parser.isSet(QStringLiteral("scroll")))
+    captureMode = CaptureEditor::CaptureMode::Scroll;
+  else if (parser.isSet(QStringLiteral("capture-region")))
+    captureMode = CaptureEditor::CaptureMode::Region;
 
   const QStringList positional = parser.positionalArguments();
-  if (parser.isSet(savedNotificationOption)) {
-    if (parser.isSet(fullscreenOption) || parser.isSet(windowOption) ||
-        parser.isSet(regionOption) || parser.isSet(copyOption) ||
-        parser.isSet(saveOption) || parser.isSet(fileOption) ||
-        parser.isSet(clipboardOption) || parser.isSet(pinOption) ||
-        parser.isSet(outputOption) || !positional.isEmpty()) {
+  const QString outputName = parser.value(QStringLiteral("output"));
+  if (parser.isSet(QStringLiteral("saved-notification"))) {
+    if (!filePath.isEmpty() || clipboardInput || requestedModes > 0 ||
+        !positional.isEmpty() || quickOutputMode != QuickOutputMode::None ||
+        parser.isSet(QStringLiteral("pin")) ||
+        parser.isSet(QStringLiteral("preview")) ||
+        parser.isSet(QStringLiteral("output"))) {
       qCritical() << "Saved notification mode cannot be combined with other targets";
       return 2;
     }
-    return runSavedNotification(parser.value(savedNotificationOption));
+    return runSavedNotification(parser.value(QStringLiteral("saved-notification")));
   }
-
-  QString filePath = parser.value(fileOption);
-  const bool clipboardInput = parser.isSet(clipboardOption);
-
-  QuickOutputMode quickOutputMode = QuickOutputMode::None;
-  if (parser.isSet(copyOption) && parser.isSet(saveOption))
-    quickOutputMode = QuickOutputMode::Both;
-  else if (parser.isSet(copyOption))
-    quickOutputMode = QuickOutputMode::Copy;
-  else if (parser.isSet(saveOption))
-    quickOutputMode = QuickOutputMode::Save;
-
-  CaptureEditor::CaptureMode captureMode = CaptureEditor::CaptureMode::Region;
-  int requestedModes = parser.isSet(fullscreenOption) +
-                       parser.isSet(windowOption) + parser.isSet(regionOption);
-  if (parser.isSet(fullscreenOption))
-    captureMode = CaptureEditor::CaptureMode::Fullscreen;
-  else if (parser.isSet(windowOption))
-    captureMode = CaptureEditor::CaptureMode::Window;
-
-  if (parser.isSet(pinOption)) {
+  if (parser.isSet(QStringLiteral("pin")) || parser.isSet(QStringLiteral("preview"))) {
     if (!filePath.isEmpty() || clipboardInput || requestedModes > 0 ||
-        !positional.isEmpty() || quickOutputMode != QuickOutputMode::None) {
+        !positional.isEmpty() || quickOutputMode != QuickOutputMode::None ||
+        (parser.isSet(QStringLiteral("pin")) && parser.isSet(QStringLiteral("preview")))) {
       qCritical()
           << "Pinned mode cannot be combined with capture or edit targets";
       return 2;
     }
-    QString pinPath = QUrl(parser.value(pinOption)).toLocalFile();
+    const bool preview = parser.isSet(QStringLiteral("preview"));
+    const QString target = parser.value(preview ? QStringLiteral("preview") : QStringLiteral("pin"));
+    QString pinPath = QUrl(target).toLocalFile();
     if (pinPath.isEmpty())
-      pinPath = parser.value(pinOption);
-    return runPinnedCapture(pinPath, parser.value(outputOption));
+      pinPath = target;
+    return runPinnedCapture(pinPath,
+                            preview ? PinLifetime::Timed : PinLifetime::Persistent,
+                            outputName);
   }
   if (positional.size() > 1) {
     qCritical() << "Only one capture target may be specified";
@@ -274,9 +279,12 @@ int main(int argc, char **argv) {
       else if (mode == QStringLiteral("windows") ||
                mode == QStringLiteral("window"))
         captureMode = CaptureEditor::CaptureMode::Window;
-      else if (mode == QStringLiteral("smart") ||
-               mode == QStringLiteral("region"))
+      else if (mode == QStringLiteral("smart"))
+        captureMode = CaptureEditor::CaptureMode::Smart;
+      else if (mode == QStringLiteral("region"))
         captureMode = CaptureEditor::CaptureMode::Region;
+      else if (mode == QStringLiteral("scroll"))
+        captureMode = CaptureEditor::CaptureMode::Scroll;
       else {
         qCritical().noquote()
             << QStringLiteral("Unknown capture target: %1").arg(mode);
@@ -297,7 +305,7 @@ int main(int argc, char **argv) {
     return 2;
   }
   const bool editingImage = clipboardInput || !filePath.isEmpty();
-  if (parser.isSet(outputOption) && !editingImage) {
+  if (parser.isSet(QStringLiteral("output")) && !editingImage) {
     qCritical() << "An output may only be specified with an image input";
     return 2;
   }
@@ -306,11 +314,17 @@ int main(int argc, char **argv) {
         << "Quick output options cannot be combined with an image input";
     return 2;
   }
+  if (!editingImage && quickOutputMode == QuickOutputMode::None &&
+      !parser.isSet(QStringLiteral("editor")))
+    quickOutputMode = QuickOutputMode::CopyAndPreview;
+  startupTimingMark("options resolved");
   if (!loadCaptureFonts())
     return 1;
+  startupTimingMark("capture font loaded");
   application.setQuitOnLastWindowClosed(true);
 
   const QString runtime = secureRuntimeDirectory();
+  startupTimingMark("runtime directory ready");
   if (runtime.isEmpty()) {
     qCritical() << "Could not create private runtime directory";
     return 1;
@@ -323,6 +337,7 @@ int main(int argc, char **argv) {
   const InstanceLockResult lockResult = acquireInstanceLock(
       instanceLock, editingImage ? InstanceMode::EditFile
                                  : InstanceMode::Capture);
+  startupTimingMark("instance lock acquired");
   if (lockResult.signalledPid != 0)
     qInfo().noquote() << QStringLiteral("Asked the running omasnap (pid %1) to "
                                         "quit")
@@ -336,6 +351,19 @@ int main(int argc, char **argv) {
   CaptureData capture;
   OperationLog restoredLog;
   QString error;
+  std::shared_ptr<PinSnapshotFile> pinDocument;
+  if (parser.isSet(QStringLiteral("pin-document"))) {
+    const QString path = parser.value(QStringLiteral("pin-document"));
+    if (!editingImage || !PinSnapshotFile::isOwnedPath(path)) {
+      qCritical("Invalid pinned document");
+      return 1;
+    }
+    pinDocument = std::make_shared<PinSnapshotFile>(path);
+    if (!pinDocument->isLocked()) {
+      qCritical("Could not retain the pinned document");
+      return 1;
+    }
+  }
   if (editingImage) {
     QImage image;
     QString inputName;
@@ -366,13 +394,12 @@ int main(int argc, char **argv) {
             << QStringLiteral("Could not restore operation log: %1").arg(error);
         return 1;
       }
+      // Ownership of private handoff files ends once both source and log
+      // are in memory. Ordinary user files are excluded by the helper.
+      removeEditorHandoff(localFile, parser.value(QStringLiteral("handoff-token")));
     }
-    capture.source = image;
-    capture.previewSize = image.size();
-    capture.monitor.scale = 1.0;
-    capture.monitor.pixelSize = image.size();
-    capture.monitor.geometry = QRect(QPoint(0, 0), image.size());
-    capture.monitor.name = parser.value(outputOption);
+    describeFileCapture(capture, image, restoredLog);
+    capture.monitor.name = outputName;
     QString outputError;
     if (capture.monitor.name.isEmpty() &&
         !queryFocusedOutputName(capture.monitor.name, outputError))
@@ -387,17 +414,23 @@ int main(int argc, char **argv) {
     sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
     return 1;
   }
+  startupTimingMark(editingImage ? "input image prepared"
+                                 : "focused monitor probed");
 
-  // Grab the output before the layer exists so the overlay is never captured.
+  // Grab the output before the layer exists. ext-image-copy-capture waits for
+  // a composited frame, so mapping the dim overlay first photographs the veil.
   const bool instantFullscreenOutput =
       !editingImage && captureMode == CaptureEditor::CaptureMode::Fullscreen &&
-      quickOutputMode != QuickOutputMode::None;
+      quickOutputMode != QuickOutputMode::None &&
+      quickOutputMode != QuickOutputMode::CopyAndPreview;
   if (!editingImage &&
       !captureMonitorPixels(capture.monitor, capture, error)) {
     qCritical().noquote() << error;
     sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
     return 1;
   }
+  startupTimingMark(editingImage ? "pixel capture skipped"
+                                 : "monitor pixels captured");
 
   if (instantFullscreenOutput) {
     QString outputError;
@@ -410,16 +443,17 @@ int main(int argc, char **argv) {
                               : renderCapture(capture,
                                               QRectF(QPointF(), capture.previewSize), {},
                                               BackgroundStyle::None);
-    if (!quickOutput(output, quickOutputMode, outputError)) {
+    if (!quickOutput(output, quickOutputMode, outputError, capture.previewSize)) {
       qCritical().noquote() << outputError;
       return 1;
     }
     return 0;
   }
 
+  // Window mode needs the regular window focused before the exclusive layer
+  // takes keyboard focus; other modes keep it for Space.
   QByteArray focusedWindowJson;
-  if (!editingImage &&
-      !queryFocusedWindow(focusedWindowJson, error) &&
+  if (!editingImage && !queryFocusedWindow(focusedWindowJson, error) &&
       captureMode == CaptureEditor::CaptureMode::Window) {
     qCritical().noquote() << error;
     sendCaptureNotification(QStringLiteral("Screenshot failed: %1").arg(error));
@@ -442,10 +476,53 @@ int main(int argc, char **argv) {
                              .arg(capture.monitor.workspaceId);
   }
 
+  const QSize editingPreview = capture.previewSize;
   CaptureEditor editor(std::move(capture), captureMode, quickOutputMode,
-                       restoredLog);
+                       restoredLog, nullptr, editorWindowMode && !editingImage);
+  editor.setPinDocument(std::move(pinDocument));
   editor.setFocusedWindowTarget(std::move(focusedWindowJson));
+  startupTimingMark("CaptureEditor constructed");
   editor.setScreen(targetScreen);
+  if (windowedEditorProcess && editingImage) {
+    // An ordinary compositor window: the compositor manages it, and its own
+    // float toggle works either way. The overlay chrome carries over
+    // unchanged; only the surface role differs.
+    editor.setWindowedPresentation(true);
+    editor.setWindowedBackdropOpaque(
+        loadEditorWindowBackdropOpaque(defaultConfigPath()));
+    editor.setWindowTitle(
+        filePath.isEmpty() ? QStringLiteral("omasnap")
+                           : QStringLiteral("omasnap %1")
+                                 .arg(QFileInfo(filePath).fileName()));
+    // Size to the visible selection, not the pristine canvas: a handed-off
+    // capture keeps its whole monitor underneath, but the window should hug
+    // what is actually being annotated.
+    const QSizeF selectionSize = editor.currentSelection().size();
+    const QSize hugged =
+        selectionSize.isEmpty() ? editingPreview : selectionSize.toSize();
+    // The guide band's height depends on how wide the card may be, so
+    // measure it at the width this window will have.
+    const int legendHeight =
+        hotkeyLegendAnchoredSize(editorHotkeyEntries(),
+                                 std::max(392, hugged.width() + 100))
+            .height();
+    const QSize naturalSize =
+        editorWindowSize(hugged, targetScreen->availableGeometry().size(),
+                         legendHeight);
+    // A hard floor clamps interactive floating resizes where the toolbar
+    // still reads; a tiled window's compositor overrides the hint, and
+    // that path is accepted as the tiled look.
+    editor.setMinimumSize(640, 420);
+    editor.resize(naturalSize);
+    editor.show();
+    editor.setFocus(Qt::ActiveWindowFocusReason);
+    const int result = application.exec();
+    // The closed editor may still be retaining its recent document. A fresh
+    // capture must not mistake that background save for an active overlay.
+    editor.hide();
+    instanceLock.unlock();
+    return result;
+  }
   editor.setGeometry(targetScreen->geometry());
   editor.winId();
   QWindow *window = editor.windowHandle();
@@ -467,10 +544,19 @@ int main(int argc, char **argv) {
   layerWindow->setKeyboardInteractivity(
       LayerShellQt::Window::KeyboardInteractivityExclusive);
   layerWindow->setActivateOnShow(true);
+  editor.setLayerWindow(layerWindow);
+  startupTimingMark("layer surface configured");
   editor.show();
   editor.setFocus(Qt::ActiveWindowFocusReason);
   if (captureMode == CaptureEditor::CaptureMode::Window)
     QTimer::singleShot(0, &editor, &CaptureEditor::captureFocusedNiriWindow);
+  startupTimingMark("show requested; entering event loop");
 
-  return application.exec();
+  const int result = application.exec();
+  editor.hide();
+  // A clean window capture temporarily replaces Niri's clipboard contents.
+  // Restore them before a replacement instance can take the lock.
+  editor.waitForWindowCapture();
+  instanceLock.unlock();
+  return result;
 }

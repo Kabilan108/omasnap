@@ -14,12 +14,23 @@
         let
           pkgs = import nixpkgs { inherit system; };
           runtimePackages = with pkgs; [
-            grim
             libnotify
             tesseract
             wl-clipboard
+            xdg-utils
           ];
           layerShellPluginDir = "${pkgs.kdePackages.layer-shell-qt}/lib/qt-6/plugins";
+          # The smoke suite checks that chrome readouts resolve fontconfig's
+          # monospace alias to a fixed-pitch face.
+          checkFonts = pkgs.writeText "omasnap-check-fonts.conf" ''
+            <?xml version="1.0"?>
+            <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+            <fontconfig>
+              <include>${pkgs.fontconfig.out}/etc/fonts/fonts.conf</include>
+              <include>${pkgs.fontconfig.out}/etc/fonts/conf.d</include>
+              <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+            </fontconfig>
+          '';
         in
         pkgs.stdenv.mkDerivation {
           pname = "omasnap";
@@ -31,6 +42,7 @@
               ./CMakeLists.txt
               ./LICENSE
               ./omasnap.desktop
+              ./protocols
               ./src
               ./tests
             ];
@@ -41,13 +53,18 @@
           nativeBuildInputs = with pkgs; [
             cmake
             ninja
+            pkg-config
             qt6.wrapQtAppsHook
+            wayland-scanner
           ];
 
           buildInputs = with pkgs; [
             kdePackages.layer-shell-qt
+            libdeflate
             libglvnd
             qt6.qtbase
+            wayland
+            wayland-protocols
           ];
 
           nativeCheckInputs = with pkgs; [
@@ -64,12 +81,12 @@
             export XDG_CACHE_HOME="$TMPDIR/cache"
             export XDG_RUNTIME_DIR="$TMPDIR/runtime"
             export OMASNAP_DISABLE_NOTIFICATIONS=1
-            export FONTCONFIG_FILE="${pkgs.fontconfig.out}/etc/fonts/fonts.conf"
+            export FONTCONFIG_FILE="${checkFonts}"
             export PATH="${lib.makeBinPath runtimePackages}:$PATH"
             mkdir -p "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
             chmod 700 "$XDG_RUNTIME_DIR"
-            QT_QPA_PLATFORM=offscreen ./omasnap-smoke "$TMPDIR/omasnap-smoke"
-            QT_QPA_PLATFORM=offscreen ./omasnap --saved-notification "$TMPDIR/omasnap-smoke-file-mode.png"
+            QT_QPA_PLATFORM=offscreen ./omasnap-smoke --output-dir "$TMPDIR/omasnap-smoke"
+            QT_QPA_PLATFORM=offscreen ./omasnap --saved-notification "$TMPDIR/omasnap-smoke/capture-file-mode.png"
             runHook postCheck
           '';
 
@@ -129,7 +146,6 @@
             inputsFrom = [ self.packages.${system}.omasnap ];
             packages = with pkgs; [
               clang-tools
-              grim
               libnotify
               nixfmt
               shellcheck

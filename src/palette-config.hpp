@@ -18,6 +18,3 @@ struct PaletteConfig {
  *  invalid entries keep the default for that slot) and [colors] custom from
  *  an INI file. A missing file or key leaves defaults untouched. */
 [[nodiscard]] PaletteConfig loadPaletteConfig(const QString &filePath);
-
-/** ~/.config/omasnap/omasnap.conf (XDG config location). */
-[[nodiscard]] QString defaultPaletteConfigPath();
