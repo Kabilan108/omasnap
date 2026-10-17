@@ -492,6 +492,7 @@ protected:
 
   void enterEvent(QEnterEvent *event) override {
     hovered_ = true;
+    setKeyboardFocus(true);
     updateExpiryPause();
     hoveredControl_ = controlRectAt(event->position());
     setCursor(hoveredControl_ >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
@@ -500,6 +501,7 @@ protected:
 
   void leaveEvent(QEvent *) override {
     hovered_ = false;
+    setKeyboardFocus(false);
     updateExpiryPause();
     hoveredControl_ = -1;
     setCursor(Qt::ArrowCursor);
@@ -507,6 +509,20 @@ protected:
   }
 
 private:
+  // Niri focuses an on-demand layer as soon as it maps and never on hover,
+  // so a pin maps with no keyboard interactivity and holds the keyboard only
+  // while the pointer is over it. Leaving hands focus back to the window.
+  void setKeyboardFocus(bool focused) {
+    QWindow *handle = windowHandle();
+    LayerShellQt::Window *layer =
+        handle ? LayerShellQt::Window::get(handle) : nullptr;
+    if (!layer)
+      return;
+    layer->setKeyboardInteractivity(
+        focused ? LayerShellQt::Window::KeyboardInteractivityExclusive
+                : LayerShellQt::Window::KeyboardInteractivityNone);
+  }
+
   void runAction(std::function<ActionResult()> worker, QString message) {
     if (actionPending_)
       return;
@@ -797,9 +813,9 @@ int runPinnedCapture(const QString &path, PinLifetime lifetime,
   layer->setExclusiveZone(0);
   layer->setDesiredSize(window.size());
   // A post-capture preview must not take keyboard focus from the app the
-  // user is returning to; pointer focus can still give it the keyboard.
+  // user is returning to; hovering gives it the keyboard.
   layer->setKeyboardInteractivity(
-      LayerShellQt::Window::KeyboardInteractivityOnDemand);
+      LayerShellQt::Window::KeyboardInteractivityNone);
   layer->setActivateOnShow(false);
   layer->setLayer(LayerShellQt::Window::LayerOverlay);
   window.show();

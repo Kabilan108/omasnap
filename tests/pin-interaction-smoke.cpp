@@ -389,6 +389,22 @@ bool runPinInteractionChecks(QString &error) {
   const QPoint background(100, 95);
   QEnterEvent enter(background, background, window.mapToGlobal(background));
   QApplication::sendEvent(&window, &enter);
+  // The pin holds the keyboard only while hovered.
+  auto *layer = LayerShellQt::Window::get(window.windowHandle());
+  if (!layer ||
+      layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityExclusive) {
+    error = QStringLiteral("Hovering a pin did not give it the keyboard");
+    return false;
+  }
+  {
+    QEvent hoverLeave(QEvent::Leave);
+    QApplication::sendEvent(&window, &hoverLeave);
+    if (layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityNone) {
+      error = QStringLiteral("Leaving a pin did not return the keyboard");
+      return false;
+    }
+    QApplication::sendEvent(&window, &enter);
+  }
   const auto drainActions = [] {
     // Completion handlers can queue document reads of their own.
     for (int pass = 0; pass < 3; ++pass) {

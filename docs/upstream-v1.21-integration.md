@@ -62,7 +62,9 @@ Compositor-agnostic features come over unchanged:
   controls and hints, `T`/`A`/`E`/`C`/`L`/`F`/`R`/`X` while hovered and `Ctrl+P`, timed
   expiry with explicit keep, reveal in folder, and edits returning to the same pin with
   their layers. A pin moves when a drag is released, because Qt cannot report a layer
-  surface's global position.
+  surface's global position. Niri focuses a newly mapped on-demand layer and never
+  focuses layers on hover, so a pin maps without keyboard interactivity and takes
+  exclusive keyboard focus only while the pointer is over it.
 - **Notifications** use `notify-send`, with the saved-capture Edit action handled by a
   detached `omasnap --saved-notification` helper.
 
