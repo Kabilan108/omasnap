@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace {
@@ -355,6 +356,8 @@ protected:
   }
 
   void mousePressEvent(QMouseEvent *event) override {
+    enterPosition_.reset();
+    setKeyboardFocus(true);
     if (event->button() == Qt::MiddleButton) {
       close();
       return;
@@ -398,6 +401,10 @@ protected:
 
   void mouseMoveEvent(QMouseEvent *event) override {
     const QPointF position = event->position();
+    if (hovered_ && enterPosition_ && *enterPosition_ != position) {
+      enterPosition_.reset();
+      setKeyboardFocus(true);
+    }
     if (dragging_) {
       setCursor(Qt::ClosedHandCursor);
       event->accept();
@@ -492,7 +499,9 @@ protected:
 
   void enterEvent(QEnterEvent *event) override {
     hovered_ = true;
-    setKeyboardFocus(true);
+    // A pin that maps under a resting pointer also receives an enter. Take
+    // the keyboard only once the pointer moves over it (or clicks it).
+    enterPosition_ = event->position();
     updateExpiryPause();
     hoveredControl_ = controlRectAt(event->position());
     setCursor(hoveredControl_ >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
@@ -502,6 +511,7 @@ protected:
   void leaveEvent(QEvent *) override {
     hovered_ = false;
     setKeyboardFocus(false);
+    enterPosition_.reset();
     updateExpiryPause();
     hoveredControl_ = -1;
     setCursor(Qt::ArrowCursor);
@@ -512,6 +522,7 @@ private:
   // Niri focuses an on-demand layer as soon as it maps and never on hover,
   // so a pin maps with no keyboard interactivity and holds the keyboard only
   // while the pointer is over it. Leaving hands focus back to the window.
+  // Niri gives the keyboard only to layers on its active output.
   void setKeyboardFocus(bool focused) {
     QWindow *handle = windowHandle();
     LayerShellQt::Window *layer =
@@ -739,6 +750,7 @@ private:
   bool dragging_ = false;
   QString toast_;
   bool hovered_ = false;
+  std::optional<QPointF> enterPosition_;
   int hoveredControl_ = -1;
 
 };

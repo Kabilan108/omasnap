@@ -528,8 +528,9 @@ Hover a pin to reveal its controls and use its keyboard shortcuts. **Edit** and
 **Copy** sit in the center of the image. The pin button sits beside **×** at the
 top-right; the drag handle, file-path button, and folder button sit at the top-left.
 Icon buttons show a short hint inside the card. Pins do not take keyboard focus when
-they appear; hovering a pin gives it the keyboard, and moving the pointer away hands
-the keyboard back to the focused window. Niri hands the keyboard only to layers on its
+they appear, even under a resting pointer; moving the pointer over a pin (or clicking
+it) gives it the keyboard, and moving the pointer away hands the keyboard back to the
+focused window. Niri hands the keyboard only to layers on its
 active output: with `focus-follows-mouse` enabled the pointer activates the pin's
 output as it crosses; without it, click the card once before using a shortcut on a pin
 that sits on another output. Opening a pin for annotation keeps the pin in place and

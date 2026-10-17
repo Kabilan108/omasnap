@@ -389,10 +389,19 @@ bool runPinInteractionChecks(QString &error) {
   const QPoint background(100, 95);
   QEnterEvent enter(background, background, window.mapToGlobal(background));
   QApplication::sendEvent(&window, &enter);
-  // The pin holds the keyboard only while hovered.
+  // The pin holds the keyboard only while the pointer moves over it: a pin
+  // that maps under a resting pointer receives an enter without motion.
   auto *layer = LayerShellQt::Window::get(window.windowHandle());
   if (!layer ||
-      layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityExclusive) {
+      layer->keyboardInteractivity() == LayerShellQt::Window::KeyboardInteractivityExclusive) {
+    error = QStringLiteral("A pin took the keyboard without pointer motion");
+    return false;
+  }
+  QMouseEvent hoverMove(QEvent::MouseMove, background + QPoint(3, 0),
+                        window.mapToGlobal(background + QPoint(3, 0)),
+                        Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+  QApplication::sendEvent(&window, &hoverMove);
+  if (layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityExclusive) {
     error = QStringLiteral("Hovering a pin did not give it the keyboard");
     return false;
   }
