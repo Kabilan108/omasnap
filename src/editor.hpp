@@ -915,6 +915,8 @@ private:
   QFutureWatcher<CaptureJob> captureWatcher_;
   QFutureWatcher<CaptureJob> windowCaptureWatcher_;
   QByteArray focusedWindowJson_;
+  /// Set when the overlay is dismissed while a window capture is still running.
+  bool windowCaptureAbandoned_ = false;
   bool capturePending_ = false;
   bool captureStarted_ = false;
   bool firstPaintReported_ = false;

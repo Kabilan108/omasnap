@@ -11,6 +11,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
+#include <QKeyEvent>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
@@ -339,6 +340,42 @@ bool runTransformSmoke(QString &error) {
     error = QStringLiteral("Editor shutdown did not drain window capture");
     restoreEnvironment();
     return false;
+  }
+
+  // Escape dismisses the overlay while the capture is still blocked, and the
+  // late result does not reopen it.
+  QFile::remove(screenshotInvoked);
+  QFile::remove(screenshotRelease);
+  {
+    CaptureEditor editor(focused);
+    editor.setSuppressSnapshots(true);
+    editor.show();
+    editor.setFocusedWindowTarget(
+        QByteArrayLiteral("{\"id\":99,\"workspace_id\":7}"));
+    editor.captureFocusedNiriWindow();
+    QElapsedTimer started;
+    started.start();
+    while (!QFile::exists(screenshotInvoked) && started.elapsed() < 5000) {
+      QApplication::processEvents();
+      QThread::msleep(2);
+    }
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(&editor, &escape);
+    const bool dismissed = !editor.isVisible();
+    QFile marker(screenshotRelease);
+    if (!marker.open(QIODevice::WriteOnly)) {
+      error = QStringLiteral("Could not release blocked window capture fixture");
+      restoreEnvironment();
+      return false;
+    }
+    marker.close();
+    editor.waitForWindowCapture();
+    QApplication::processEvents();
+    if (!dismissed || editor.isVisible()) {
+      error = QStringLiteral("Escape did not dismiss a blocked window capture");
+      restoreEnvironment();
+      return false;
+    }
   }
   qputenv("OMASNAP_TEST_BLOCK_SCREENSHOT", QByteArrayLiteral("0"));
   QFile drainedPayload(clipboard);

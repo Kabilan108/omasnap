@@ -1000,6 +1000,8 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
   connect(&windowCaptureWatcher_, &QFutureWatcher<CaptureJob>::finished, this,
           [this] {
             busy_ = false;
+            if (windowCaptureAbandoned_)
+              return;
             CaptureJob job = windowCaptureWatcher_.result();
             if (!job.ok) {
               setStatus(QStringLiteral("%1 · drag an area or press Space to try again")
@@ -4407,6 +4409,16 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
                               key == Qt::Key_Alt || key == Qt::Key_Meta;
     if (!modifierOnly)
       dismissOcrOverlay();
+  }
+  // A clean window capture can wait seconds on external processes. Let the
+  // overlay be dismissed meanwhile; shutdown still drains the worker so the
+  // clipboard is restored before the instance lock is released.
+  if (windowCaptureWatcher_.isRunning() &&
+      (event->key() == Qt::Key_Escape ||
+       (event->key() == Qt::Key_W && event->modifiers() == Qt::MetaModifier))) {
+    windowCaptureAbandoned_ = true;
+    close();
+    return;
   }
   if (phase_ == Phase::Export || busy_) {
     event->accept();
