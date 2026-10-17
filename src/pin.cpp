@@ -504,11 +504,15 @@ protected:
 
   void enterEvent(QEnterEvent *event) override {
     hovered_ = true;
-    // A pin that maps under a resting pointer receives an enter at once.
-    // That one waits for pointer motion or a click before taking the keyboard;
-    // the pointer moving onto a pin later takes it immediately.
+    // Niri also sends an enter without pointer motion when the pin maps under
+    // a resting pointer, or when a surface covering it (such as the next
+    // capture overlay) unmaps. Those wait for motion or a click before taking
+    // the keyboard; the pointer moving onto a pin takes it immediately.
+    const bool mapping =
+        !shownClock_.isValid() || shownClock_.elapsed() < kMapEnterMs;
+    const bool unmoved = event->position() == lastPointer_;
     lastPointer_ = event->position();
-    if (!shownClock_.isValid() || shownClock_.elapsed() < kMapEnterMs) {
+    if (mapping || unmoved) {
       pendingKeyboard_ = true;
       pendingPosition_ = event->position();
     } else {

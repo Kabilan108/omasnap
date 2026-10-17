@@ -534,11 +534,26 @@ bool runPinInteractionChecks(QString &error) {
   // Moving onto a pin well after it mapped takes the keyboard at once.
   QTest::qWait(kMapEnterMs + 50);
   {
+    const QPoint elsewhere = background - QPoint(20, 10);
+    QEnterEvent enterElsewhere(elsewhere, elsewhere, window.mapToGlobal(elsewhere));
     QEvent hoverLeave(QEvent::Leave);
     QApplication::sendEvent(&window, &hoverLeave);
-    QApplication::sendEvent(&window, &enter);
+    QApplication::sendEvent(&window, &enterElsewhere);
     if (layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityExclusive) {
       error = QStringLiteral("Moving onto a mapped pin did not give it the keyboard");
+      return false;
+    }
+    // A covering surface unmapping re-enters at the same, unmoved position:
+    // that waits for motion.
+    QApplication::sendEvent(&window, &hoverLeave);
+    QApplication::sendEvent(&window, &enterElsewhere);
+    if (layer->keyboardInteractivity() == LayerShellQt::Window::KeyboardInteractivityExclusive) {
+      error = QStringLiteral("An uncovered pin took the keyboard without pointer motion");
+      return false;
+    }
+    QApplication::sendEvent(&window, &hoverMove);
+    if (layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityExclusive) {
+      error = QStringLiteral("Motion over an uncovered pin did not give it the keyboard");
       return false;
     }
   }

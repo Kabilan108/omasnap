@@ -95,6 +95,10 @@ Compositor-agnostic features come over unchanged:
 - Pin shortcuts on an inactive output need Niri's `focus-follows-mouse`, or a click on
   the card first: Niri gives the keyboard only to layers on its active output, and a
   client cannot activate an output.
+- A pin takes the keyboard when the pointer moves onto it. Enters Niri sends without
+  motion (the pin mapping under a resting pointer, or a covering overlay closing) wait
+  for motion, but releasing a capture-overlay drag over an older pin gives that pin the
+  keyboard; move the pointer off it to hand the keyboard back.
 - A timed preview can expire while its editor is open; pin it first to keep it, as
   upstream documents. Dismissing the editor still keeps the capture in recents.
 - Upstream's stitched-scroll adoption replaces the operation log, so a configured
