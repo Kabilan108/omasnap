@@ -1113,9 +1113,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
 }
 
 CaptureEditor::~CaptureEditor() {
-  // A clean window capture temporarily replaces Niri's clipboard contents.
-  // Keep this instance and its lock alive until the worker has restored them.
-  windowCaptureWatcher_.waitForFinished();
+  waitForWindowCapture();
   cancelSaveAs();
   // Output completion closes the window before history compression finishes.
   // Drain those value-only workers after the surface has gone; main releases

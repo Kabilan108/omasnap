@@ -555,6 +555,9 @@ int main(int argc, char **argv) {
 
   const int result = application.exec();
   editor.hide();
+  // A clean window capture temporarily replaces Niri's clipboard contents.
+  // Restore them before a replacement instance can take the lock.
+  editor.waitForWindowCapture();
   instanceLock.unlock();
   return result;
 }

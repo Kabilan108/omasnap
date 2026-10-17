@@ -81,6 +81,8 @@ public:
   void startCapture(CaptureMode mode);
   /** Captures the regular Niri window focused beneath the layer overlay. */
   void captureFocusedNiriWindow();
+  /** Blocks until a clean window capture has restored the clipboard. */
+  void waitForWindowCapture() { windowCaptureWatcher_.waitForFinished(); }
   /** Retains the focused-window response obtained before the layer mapped. */
   void setFocusedWindowTarget(QByteArray windowJson) {
     focusedWindowJson_ = std::move(windowJson);
