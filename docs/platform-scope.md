@@ -1,90 +1,54 @@
-# Platform scope: Wayland + Hyprland, on purpose
+# Platform scope: Wayland + Niri
 
-Omasnap targets one platform: **Wayland, on Hyprland, on Omarchy.** This is
-not a starting point we intend to broaden into a general Linux screenshot
-tool. It is a deliberate choice that keeps the code small and lets it use
-real platform facilities instead of lowest-common-denominator
-abstractions.
+This fork targets one platform: **Wayland on Niri**. Upstream Omasnap targets
+Hyprland on Omarchy; this fork replaces the Hyprland-specific parts with Niri
+equivalents and drops the Omarchy integrations. It is not a general Linux
+screenshot tool, and it does not try to keep the Hyprland path working.
 
-## What "Hyprland-only" means concretely
+## What "Niri-only" means concretely
 
-- Monitor and window discovery goes through `hyprctl` (`hyprctl monitors
-  -j`, `hyprctl clients -j`) — see `src/capture.cpp`. There is no
-  generic-compositor fallback for this, because there is no generic,
-  reliable way to ask an arbitrary Wayland compositor "what windows exist
-  and where."
-- Scroll capture's auto-scroll reads `hyprctl getoption input:natural_scroll`
-  to pre-compensate injected wheel events (`src/scroll-inject.cpp`) — a
-  Hyprland-specific input policy, queried the Hyprland-specific way.
-- The keyboard-grab dance in the scroll and area overlays
-  (`setKeyboardGrab` in `src/scroll-capture.cpp`) works around a specific,
-  observed Hyprland behavior: an exclusive keyboard grab on a layer surface
-  pins pointer focus to that layer even over an input-region hole. The
-  overlay therefore releases exclusive focus over the live page, retaining
-  on-demand keyboard interactivity so Escape can still reach it when focused.
-  Pointer events over the chrome restore exclusive focus. This documents a
-  Hyprland quirk, not a generic Wayland rule.
-- Hyprland's `no_screen_share` layer rule draws a black rectangle over the
-  layer's full bounds in output captures, including transparent regions. Do not
-  apply it to Omasnap: the scrolling overlay needs to capture the live desktop
-  through its transparent region. Ordinary captures happen before the overlay
-  maps and do not need an exclusion rule.
-- Notifications prefer `omarchy-notification-send` and fall back to
-  `OMARCHY_OCR_LANGS`/`OMASNAP_OCR_LANGS` conventions that assume an Omarchy
-  install (see `src/capture.cpp`, README's OCR section).
+- Output and workspace discovery go through Niri's JSON IPC (`niri msg --json
+  focused-output`, `workspaces`, `outputs`) in `src/capture.cpp`.
+- Window capture is Niri's own clean window screenshot: `main.cpp` asks for
+  `niri msg --json focused-window` before the overlay maps (the overlay takes
+  keyboard focus), and Space or `--capture-window` runs `niri msg action
+  screenshot-window --id N --path P`. Niri also puts that image on the
+  clipboard, so the worker snapshots the clipboard first, refuses to capture if
+  it cannot, and restores it afterward; shutdown waits for the restore before
+  releasing the instance lock.
+- Clicking a window in the smart picker is not supported. Niri reports
+  on-screen positions only for floating windows (`tile_pos_in_workspace_view`
+  is None for tiled windows), so there is no rectangle to highlight or crop. A
+  smart click selects the full output instead.
+- Window captures name files with Niri's `app_id` for the `{app}` token.
+  Region and fullscreen captures have no app name.
+- The windowed editor and the Save As chooser are ordinary xdg-shell windows
+  with app-id `omasnap`. Omasnap does not place them; a Niri window rule does
+  (see the README). Without the rule Niri tiles them.
+- Pins are layer-shell surfaces on the overlay layer, anchored bottom-right in
+  per-process slots, visible on every workspace without window rules. Upstream's
+  floating-window deck and its compositor placement are not used. A pin moves
+  on release because Qt cannot report a layer surface's global position.
+- Scroll capture keeps the overlay's exclusive keyboard focus while the page
+  under the region is live. Niri routes pointer input through the input-region
+  hole by position alone, so the wheel reaches the page while Enter and Escape
+  reach the overlay. (Upstream drops the grab over the page because Hyprland
+  pins pointer focus to an exclusive layer.)
+- Auto-scroll injects wheel events through a `zwlr_virtual_pointer_v1` bound to
+  the capture output. Positive axis values scroll the page down on Niri.
+- Notifications use `notify-send`; saved captures get an Edit action through a
+  detached `omasnap --saved-notification` helper.
 
-## What's actually generic, and why it can work elsewhere by accident
+## Generic Wayland underneath
 
-Underneath the Hyprland-specific discovery, the capture and injection
-mechanisms are standard Wayland protocols: `ext-image-copy-capture` for
-reading pixels (`src/surface-capture.cpp`), `zwlr_virtual_pointer_v1` for
-injected scroll input (`src/scroll-inject.cpp`, protocol vendored in
-`protocols/`), and `layer-shell` for every overlay surface. Any wlroots
-compositor that implements the same protocols (Sway, river, and others)
-will likely run the fullscreen/region/window capture and the editor without
-modification, because that code never asks "is this Hyprland" — it asks the
-compositor for a capability and uses it if offered.
+Capture, injection and surfaces stand on standard protocols:
+`ext-image-copy-capture` for pixels (`src/surface-capture.cpp`),
+`zwlr_virtual_pointer_v1` for injected scrolling (`src/scroll-inject.cpp`,
+protocol vendored in `protocols/`), and `layer-shell` for the overlay and pins.
+Another compositor implementing the same protocols might run parts of the tool,
+but only Niri is tested, and nothing here adds fallbacks or compositor
+detection for others.
 
-**This is fine, and it is not a target.** If it works on another
-wlroots compositor, that's a side effect of standing on real protocols
-instead of a bespoke integration, not a supported configuration. We do not
-add fallbacks, feature flags, or compatibility code to make it work
-somewhere else. We do not test on anything but Hyprland. A bug that only
-reproduces on another compositor is not a bug we chase.
+## Not supported
 
-## Contribution policy for other window managers
-
-A pull request that adds support for, or improves behavior on, a different
-Wayland compositor (niri, KDE/KWin, GNOME/Mutter, plain Sway, etc.) is
-**welcome if and only if it adds zero complexity to the Hyprland path.**
-Concretely:
-
-- **Accept:** using an existing generic protocol path that already runs on
-  Hyprland, where the PR is really "this also happens to work on niri,
-  here's the one guard that was Hyprland-specific and didn't need to be."
-- **Accept:** replacing a Hyprland-only call with a protocol-based
-  equivalent that is a strict improvement on Hyprland too (fewer external
-  processes, more accurate data, etc.) and happens to be portable as a
-  bonus.
-- **Reject:** anything that branches on compositor identity
-  (`if (hyprland) ... else if (kwin) ...`), adds a second discovery
-  backend, introduces a compositor-detection abstraction layer, or adds a
-  runtime/compile-time flag to select behavior. If it needs an `#ifdef`, a
-  new interface, or a "backend" concept, it doesn't belong here — fork it,
-  or maintain it downstream.
-- **Reject:** dependencies pulled in only to support another compositor
-  (e.g., a KWin scripting library, GNOME Shell D-Bus bindings). See
-  [dependencies.md](dependencies.md).
-
-If in doubt, the test is: **would a Hyprland user notice any difference —
-in binary size, startup time, code paths exercised, or dependencies — if
-this PR were reverted?** If the answer is no, it's probably fine. If the
-answer is yes, it's probably out of scope.
-
-## X11, macOS, Windows
-
-Not supported, not planned, not accepted. These are different enough
-(different capture APIs, different input injection, different window
-management entirely) that "zero added complexity" is not achievable, and
-there is no version of this tool that is simultaneously fast, small, and
-portable to them.
+X11, macOS, Windows, Hyprland, and generic-compositor fallbacks.

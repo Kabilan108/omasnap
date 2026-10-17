@@ -16,12 +16,11 @@ From `CMakeLists.txt`, this is the entire list:
 | **libdeflate** (pkg-config) | Fast lossless PNG compression and CRCs for 8-bit screenshots; avoids seconds of Qt/zlib encoding before a 6K preview can appear |
 | **wayland-scanner** + protocol XML | Generates the C bindings for the above at build time; not a runtime dependency |
 
-That's it. No JSON library (Qt's `QJsonDocument` handles `hyprctl -j`
+That's it. No JSON library (Qt's `QJsonDocument` handles `niri msg --json`
 output), no HTTP,
 no logging framework, no CLI-parsing library beyond `QCommandLineParser`,
 no general config-file parser beyond `QSettings` (used for the one optional INI
-file — see below). The theme adapter reads a bounded scalar subset of Omarchy's
-TOML color files with Qt; it adds no parser library.
+file — see below).
 
 `src/png.cpp` writes ordinary 8-bit RGB/RGBA PNGs using libdeflate at level 1.
 On a captured 6K desktop, Qt's default PNG encoding took about 3 seconds;
@@ -37,22 +36,19 @@ is preserved on both paths. No quality or compression setting is exposed.
 
 ## Runtime: external processes, not libraries
 
-Omasnap shells out to a small number of existing Omarchy/Arch tools instead
-of linking their libraries in-process. This is intentional: a `QProcess`
-call to a well-maintained CLI tool that's already on every Omarchy install
-is a dependency Omasnap doesn't have to build, version, or debug — the
-alternative (vendoring an OCR engine, a clipboard protocol implementation,
-or a compositor IPC client) would be strictly more code and more risk for
-no user-visible benefit.
+Omasnap shells out to a small number of existing tools instead of linking
+their libraries in-process. A `QProcess` call to a well-maintained CLI tool is
+a dependency Omasnap doesn't have to build, version, or debug. The Nix package
+puts these on the wrapper's `PATH`, except `niri` itself.
 
 | Process | Used for | Required? |
 |---|---|---|
-| `hyprctl` | Monitor/window discovery (`-j` JSON), floating pin placement, natural-scroll policy query | Yes — see [platform-scope.md](platform-scope.md) |
-| `wl-copy` / `wl-paste` | Writing PNG/text to the Wayland clipboard, and verifying the write | Yes |
+| `niri msg` | Output/workspace discovery (`--json`), the focused window, and clean window screenshots (`action screenshot-window`) | Yes — see [platform-scope.md](platform-scope.md) |
+| `wl-copy` / `wl-paste` | Writing PNG/text to the Wayland clipboard, verifying the write, and preserving the clipboard around Niri's window screenshot | Yes |
 | `xdg-open` | Opening a screenshot's containing folder in the default file browser | For Show in folder |
 | `xdg-mime` / `busctl` | Resolve the default folder application and ask it to select the screenshot with `FileManager1.ShowItems` | Optional — falls back to `xdg-open` |
 | `tesseract` | OCR text recognition | Only if OCR is used; missing tesseract fails just that action |
-| `omarchy-notification-send` | Capture-finished notifications | No — falls back silently if absent (checked with `command -v` semantics via failed `QProcess::startDetached`) |
+| `notify-send` | Capture-finished notifications, with an Edit action for saved captures | No — failure does not affect the output |
 
 These run through the small `QProcess` helpers in `src/capture.cpp` and
 `src/pin.cpp`, from a background worker (see [threading.md](threading.md)).
@@ -61,13 +57,12 @@ detached. None run inline on the UI thread.
 
 ## Not a dependency: external Qt platform themes
 
-Omarchy exports `QT_QPA_PLATFORMTHEME=gtk3` for the whole session so Qt apps
-match GTK apps. Omasnap overrides it to `generic` (Qt's built-in theme) for
+Desktops often export `QT_QPA_PLATFORMTHEME` (for example `gtk3`) for the
+whole session so Qt apps match GTK apps. Omasnap overrides it to `generic` (Qt's built-in theme) for
 its own process in `main()` before `QApplication` is constructed: honouring
 the session value loads the `qgtk3` plugin,
 which initialises GTK3, GLib/GIO and dconf inside the process — measured at
-81–112 ms of `QApplication` construction and ~20–24 MiB of RSS on an Omarchy
-laptop — for hand-painted chrome and Qt's built-in file chooser. The only
+81–112 ms of `QApplication` construction and ~20–24 MiB of RSS on a laptop — for hand-painted chrome and Qt's built-in file chooser. The only
 relevant values the external theme supplied were its general and fixed fonts;
 their chrome and application-default replacements
 are pinned by `chromeFont()`, `chromeMonoFont()`, and `chromeDefaultFont()`
@@ -76,18 +71,13 @@ depend on an external desktop theme, `QStyle`- or palette-derived chrome, or
 icon-theme lookup: each is a startup cost with nothing in this codebase to
 spend it on.
 
-Chrome colors do follow Omarchy. `src/chrome-theme.cpp` reads `colors.toml` and
-the optional `shell.toml` from `~/.local/state/omarchy/current/theme` on a worker.
-It resolves palette references, control fills, tooltip colors, and solid or
-gradient borders into explicit paint values. Missing or malformed data has
-readable defaults. A filesystem watcher reloads the palette after file or
-directory replacement and repaints open windows. This does not use Qt's desktop
-palette, alter annotation/export colors, or change the pinned fonts.
+Chrome colors are the built-in palette in `src/chrome-theme.cpp`; upstream's
+Omarchy theme loader is not part of this fork.
 
 ## Save As dialog
 
 Save As uses the existing Qt Widgets file chooser asynchronously, with pinned
-chrome fonts and the active Omarchy theme, including live theme changes.
+chrome fonts and the built-in chrome palette.
 The overlay alone receives its layer-shell
 role through `LayerShellQt::Window::get`; the inherited global shell override
 is cleared so the chooser and overwrite prompts use ordinary xdg-shell windows.
@@ -111,12 +101,12 @@ Ask, in order:
    concurrency, text layout, SVG, image I/O). Check before reaching
    further.
 2. **Is this an OS-integration concern better solved by shelling out to an
-   existing Omarchy tool**, the way clipboard, OCR, and notifications are?
+   existing tool**, the way clipboard, OCR, and notifications are?
    A new external-process dependency is far cheaper than a new linked
    library: it doesn't grow the binary, doesn't add a build-time
    dependency, and fails gracefully (a missing/failed process is just an
    error message).
-3. **Does it exist only to support a non-Hyprland compositor?** Then it's
+3. **Does it exist only to support a compositor other than Niri?** Then it's
    out of scope — see [platform-scope.md](platform-scope.md).
 4. **Is it justified anyway?** Then it needs to earn its place in the table
    above, and this file needs to be updated in the same PR. A dependency
@@ -131,8 +121,8 @@ adapted to the existing `QPainterPath` renderer. Its ISC notice is in
 `assets/Lucide-ISC.txt` and installed with the font licenses. No icon library,
 SVG renderer, or theme lookup is needed.
 
-Single, statically-linked-where-practical binary, installed to
-`~/.local/bin/omasnap` (see the repository's `install-omarchy`). Every
+Single, statically-linked-where-practical binary, installed by the Nix
+flake or to `~/.local/bin/omasnap` by `cmake --install`. Every
 dependency added here is weight every user carries on every install and
 every update. If a feature can be built with what's already linked, that's
 the implementation to ship.
