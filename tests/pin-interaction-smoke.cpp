@@ -518,6 +518,17 @@ bool runPinInteractionChecks(QString &error) {
     error = QStringLiteral("Holding T repeatedly toggled the preview pin");
     return false;
   }
+  // Moving onto a pin well after it mapped takes the keyboard at once.
+  QTest::qWait(kMapEnterMs + 50);
+  {
+    QEvent hoverLeave(QEvent::Leave);
+    QApplication::sendEvent(&window, &hoverLeave);
+    QApplication::sendEvent(&window, &enter);
+    if (layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityExclusive) {
+      error = QStringLiteral("Moving onto a mapped pin did not give it the keyboard");
+      return false;
+    }
+  }
   QTest::keyClick(&window, Qt::Key_X);
   if (window.isVisible()) {
     error = QStringLiteral("X did not close the pin");

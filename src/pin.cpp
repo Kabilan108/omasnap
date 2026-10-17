@@ -13,6 +13,7 @@
 #include <QBuffer>
 #include <QCloseEvent>
 #include <QDrag>
+#include <QElapsedTimer>
 #include <QEnterEvent>
 #include <QFile>
 #include <QFileInfo>
@@ -42,7 +43,6 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
-#include <optional>
 #include <utility>
 
 namespace {
@@ -50,6 +50,8 @@ namespace {
 constexpr int kCornerMargin = 14;
 constexpr int kPinGap = 10;
 constexpr int kToastMs = 1200;
+/// Enters this soon after mapping come from a pointer already resting there.
+constexpr int kMapEnterMs = 300;
 
 QString runForOutput(const QString &program, const QStringList &arguments,
                      bool *ok = nullptr, int timeoutMs = 500) {
@@ -240,6 +242,7 @@ public:
 protected:
   void showEvent(QShowEvent *event) override {
     QWidget::showEvent(event);
+    shownClock_.start();
     expiry_.start();
   }
 
@@ -356,7 +359,7 @@ protected:
   }
 
   void mousePressEvent(QMouseEvent *event) override {
-    enterPosition_.reset();
+    pendingKeyboard_ = false;
     setKeyboardFocus(true);
     if (event->button() == Qt::MiddleButton) {
       close();
@@ -401,8 +404,8 @@ protected:
 
   void mouseMoveEvent(QMouseEvent *event) override {
     const QPointF position = event->position();
-    if (hovered_ && enterPosition_ && *enterPosition_ != position) {
-      enterPosition_.reset();
+    if (pendingKeyboard_ && position != pendingPosition_) {
+      pendingKeyboard_ = false;
       setKeyboardFocus(true);
     }
     if (dragging_) {
@@ -499,9 +502,15 @@ protected:
 
   void enterEvent(QEnterEvent *event) override {
     hovered_ = true;
-    // A pin that maps under a resting pointer also receives an enter. Take
-    // the keyboard only once the pointer moves over it (or clicks it).
-    enterPosition_ = event->position();
+    // A pin that maps under a resting pointer receives an enter at once.
+    // That one waits for pointer motion or a click before taking the keyboard;
+    // the pointer moving onto a pin later takes it immediately.
+    if (!shownClock_.isValid() || shownClock_.elapsed() < kMapEnterMs) {
+      pendingKeyboard_ = true;
+      pendingPosition_ = event->position();
+    } else {
+      setKeyboardFocus(true);
+    }
     updateExpiryPause();
     hoveredControl_ = controlRectAt(event->position());
     setCursor(hoveredControl_ >= 0 ? Qt::PointingHandCursor : Qt::ArrowCursor);
@@ -511,7 +520,7 @@ protected:
   void leaveEvent(QEvent *) override {
     hovered_ = false;
     setKeyboardFocus(false);
-    enterPosition_.reset();
+    pendingKeyboard_ = false;
     updateExpiryPause();
     hoveredControl_ = -1;
     setCursor(Qt::ArrowCursor);
@@ -750,7 +759,9 @@ private:
   bool dragging_ = false;
   QString toast_;
   bool hovered_ = false;
-  std::optional<QPointF> enterPosition_;
+  QElapsedTimer shownClock_;
+  bool pendingKeyboard_ = false;
+  QPointF pendingPosition_;
   int hoveredControl_ = -1;
 
 };
