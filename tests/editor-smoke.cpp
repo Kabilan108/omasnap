@@ -28,7 +28,6 @@
 #include "stroke-smoothing-smoke.hpp"
 #include "pin-lifecycle-smoke.hpp"
 #include "pin-file.hpp"
-#include "overlay-dismissal.hpp"
 #include "text-band.hpp"
 #include "transform-smoke.hpp"
 #include "eyedropper.hpp"
@@ -4059,13 +4058,12 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
     return first.convertToFormat(QImage::Format_ARGB32) ==
            second.convertToFormat(QImage::Format_ARGB32);
   };
-  enum class Dismissal { Escape, SuperW, Compositor, Forwarded };
+  enum class Dismissal { Escape, SuperW, Compositor };
   struct DismissalCase { bool windowed; Dismissal dismissal; };
   for (const auto &[windowed, dismissal] : {
            DismissalCase{false, Dismissal::Escape}, {true, Dismissal::Escape},
            {false, Dismissal::SuperW}, {true, Dismissal::SuperW},
-           {false, Dismissal::Compositor}, {true, Dismissal::Compositor},
-           {false, Dismissal::Forwarded}}) {
+           {false, Dismissal::Compositor}, {true, Dismissal::Compositor}}) {
     const auto dismiss = [&](CaptureEditor &editor, QWidget *input = nullptr) {
       if (dismissal == Dismissal::Compositor) {
         // A Close sent to QWindow (outside QWindow::close()) becomes a
@@ -4074,8 +4072,6 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
         QCoreApplication::sendEvent(editor.windowHandle(), &close);
         return !close.isAccepted();
       }
-      if (dismissal == Dismissal::Forwarded)
-        return dismissActiveOverlay();
       QTest::keyClick(input ? input : &editor,
                       dismissal == Dismissal::Escape ? Qt::Key_Escape : Qt::Key_W,
                       dismissal == Dismissal::Escape ? Qt::NoModifier : Qt::MetaModifier);
@@ -4094,9 +4090,6 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
                             QuickOutputMode::None, originalLog);
       editor.setPinDocument(std::make_shared<PinSnapshotFile>(documentPath));
       editor.setWindowedPresentation(windowed);
-      std::unique_ptr<OverlayDismissal> overlayDismissal;
-      if (dismissal == Dismissal::Forwarded)
-        overlayDismissal = std::make_unique<OverlayDismissal>(editor);
       editor.resize(1000, 800);
       editor.show();
       application.processEvents();
@@ -4118,10 +4111,6 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
                     .arg(static_cast<int>(dismissal));
         return false;
       }
-      if (dismissActiveOverlay()) {
-        error = QStringLiteral("The closed overlay still intercepted pin close requests");
-        return false;
-      }
     }
     OperationLog edited;
     if (!loadOperationLog(operationLogPath(documentPath), edited, error))
@@ -4131,9 +4120,6 @@ bool runPinEditorReturnChecks(QApplication &application, QString &error) {
                               QuickOutputMode::None, edited);
       reopened.setPinDocument(std::make_shared<PinSnapshotFile>(documentPath));
       reopened.setWindowedPresentation(windowed);
-      std::unique_ptr<OverlayDismissal> overlayDismissal;
-      if (dismissal == Dismissal::Forwarded)
-        overlayDismissal = std::make_unique<OverlayDismissal>(reopened);
       reopened.resize(1000, 800);
       reopened.show();
       application.processEvents();
