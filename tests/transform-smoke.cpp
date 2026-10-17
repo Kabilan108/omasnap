@@ -205,6 +205,49 @@ bool runTransformSmoke(QString &error) {
 
   restoredPayload.close();
   restoredType.close();
+
+  // A clean window capture keeps the configured default backdrop as its
+  // first operation, so replaying later annotations does not drop it.
+  {
+    const QByteArray oldConfigHome = qgetenv("XDG_CONFIG_HOME");
+    const QString configDir =
+        QDir(fakeCommands.path()).filePath(QStringLiteral("config/omasnap"));
+    QFile config(QDir(configDir).filePath(QStringLiteral("omasnap.conf")));
+    if (!QDir().mkpath(configDir) || !config.open(QIODevice::WriteOnly) ||
+        config.write("[background]\ndefault = slate\n") < 0) {
+      error = QStringLiteral("Could not write the backdrop config fixture");
+      restoreEnvironment();
+      return false;
+    }
+    config.close();
+    qputenv("XDG_CONFIG_HOME",
+            QDir(fakeCommands.path()).filePath(QStringLiteral("config")).toUtf8());
+    CaptureEditor editor(focused, CaptureEditor::CaptureMode::Smart,
+                         QuickOutputMode::None);
+    editor.setSuppressSnapshots(true);
+    editor.setFocusedWindowTarget(
+        QByteArrayLiteral("{\"id\":99,\"workspace_id\":7,\"app_id\":\"org.test.App\"}"));
+    editor.captureFocusedNiriWindow();
+    editor.waitForWindowCapture();
+    QApplication::processEvents();
+    if (oldConfigHome.isNull())
+      qunsetenv("XDG_CONFIG_HOME");
+    else
+      qputenv("XDG_CONFIG_HOME", oldConfigHome);
+    const auto &ops = editor.operationLog();
+    const bool seeded =
+        !ops.isEmpty() && ops.constFirst().type == Operation::Type::Background &&
+        ops.constFirst().background == BackgroundStyle::Slate &&
+        editor.operationIndex() >= 1;
+    if (!seeded || editor.captureData().appId != QStringLiteral("org.test.App") ||
+        editor.captureData().source != window) {
+      error = QStringLiteral("Window capture dropped its backdrop, app id, or pixels");
+      restoreEnvironment();
+      return false;
+    }
+    editor.close();
+  }
+
   QFile::remove(screenshotInvoked);
   QFile::remove(screenshotRelease);
   qputenv("OMASNAP_TEST_BLOCK_SCREENSHOT", QByteArrayLiteral("1"));

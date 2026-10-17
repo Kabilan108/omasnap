@@ -1008,7 +1008,9 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
               update();
               return;
             }
-            OperationLog log;
+            // Keep the fresh capture's seeded operations, such as the
+            // configured default backdrop.
+            OperationLog log = currentOperationLog();
             log.previewSize = job.capture.previewSize;
             const QString appId = job.capture.appId;
             adoptImage(std::move(job.capture.source), std::move(log),
