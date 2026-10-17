@@ -19,6 +19,7 @@
 #include "recent-persistence-smoke.hpp"
 #include "instance-lock-smoke.hpp"
 #include "palette-config-smoke.hpp"
+#include "pin-interaction-smoke.hpp"
 #include "pin-layout-smoke.hpp"
 #include "stitch-smoke.hpp"
 #include "scroll-startup-smoke.hpp"
@@ -11955,6 +11956,8 @@ bool runArrowStyleSmoke(QApplication &application, QString &error) {
 
 
 int main(int argc, char **argv) {
+  if (qEnvironmentVariableIsSet(kPinSmokeEditorChild))
+    return 0;
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
       qEnvironmentVariable(kInstanceLockHolderVariable);
@@ -12287,6 +12290,15 @@ int main(int argc, char **argv) {
   if (!runPinExpirySmoke(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 211;
+  }
+  if (!runPinInteractionSmoke(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 212;
+  }
+  if (!runPinThemeRenderingSmoke(outputRoot + QStringLiteral("-pin-theme.png"),
+                                 snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 213;
   }
   if (!runSpotlightAndSampleChecks(snapshotError)) {
     qWarning().noquote() << snapshotError;

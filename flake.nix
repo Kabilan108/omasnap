@@ -17,6 +17,7 @@
             libnotify
             tesseract
             wl-clipboard
+            xdg-utils
           ];
           layerShellPluginDir = "${pkgs.kdePackages.layer-shell-qt}/lib/qt-6/plugins";
           # The smoke suite checks that chrome readouts resolve fontconfig's
