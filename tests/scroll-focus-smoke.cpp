@@ -1,4 +1,5 @@
-/** @fileoverview The scroll panel cannot reclaim focus after handing it back. */
+/** @fileoverview The scroll panel keeps the editor's keyboard focus while the
+ *  page under its region is live, so Escape and Enter keep working. */
 #include "scroll-focus-smoke.hpp"
 #include "scroll-capture.hpp"
 
@@ -6,6 +7,7 @@
 #include <QApplication>
 #include <QEnterEvent>
 #include <QEvent>
+#include <QKeyEvent>
 #include <QPointF>
 #include <QRect>
 #include <QString>
@@ -24,22 +26,27 @@ bool runScrollFocusSmoke(QString &error) {
   MonitorInfo monitor;
   monitor.geometry = QRect(0, 0, 800, 600);
   ScrollCapturePanel panel(monitor, layer, &host);
+  bool dismissed = false;
+  QObject::connect(&panel, &ScrollCapturePanel::dismissed, &panel,
+                   [&dismissed] { dismissed = true; });
   panel.begin(QRect(100, 100, 400, 300));
-  if (layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityOnDemand) {
-    error = QStringLiteral("The live page did not release exclusive focus");
-    return false;
-  }
-  // Hovering the chrome owns focus when Escape/Done dismisses the panel.
-  const QPointF point(20, 20);
-  QEnterEvent enter(point, point, point);
+  // Pointer motion over the live page and off the surface must not hand the
+  // keyboard to the page.
+  const QPointF inside(300, 250);
+  QEnterEvent enter(inside, inside, inside);
   QApplication::sendEvent(&panel, &enter);
-  panel.release();
-  // Hiding a hovered child can deliver Leave after the editor has already
-  // reclaimed its surface. That old event must not release the editor's grab.
   QEvent leave(QEvent::Leave);
   QApplication::sendEvent(&panel, &leave);
   if (layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityExclusive) {
-    error = QStringLiteral("A released scroll panel stole the editor's keyboard grab");
+    error = QStringLiteral("The live page took the scroll panel's keyboard focus");
+    return false;
+  }
+  QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+  QApplication::sendEvent(&panel, &escape);
+  panel.release();
+  if (!dismissed ||
+      layer->keyboardInteractivity() != LayerShellQt::Window::KeyboardInteractivityExclusive) {
+    error = QStringLiteral("Escape did not cancel the live scroll region");
     return false;
   }
   return true;

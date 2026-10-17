@@ -166,8 +166,8 @@ enum class AnnotationLayer { Redaction, Default };
 /** Names the Niri output that currently has keyboard focus. */
 [[nodiscard]] bool queryFocusedOutputName(QString &name, QString &error);
 /**
- * Captures the given output's pixels. Pure I/O and image work (no GUI
- * objects): safe on any thread.
+ * Captures the given output's pixels through ext-image-copy-capture. Pure I/O
+ * and image work (no GUI objects): safe on any thread.
  */
 [[nodiscard]] bool captureMonitorPixels(const MonitorInfo &monitor,
                                         CaptureData &capture, QString &error);

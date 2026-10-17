@@ -1555,19 +1555,10 @@ bool captureMonitorPixels(const MonitorInfo &monitor, CaptureData &capture,
                   .arg(testCapture);
       return false;
     }
-  } else {
-    const ProcessResult grim = runProcess(
-        QStringLiteral("grim"),
-        {QStringLiteral("-t"), QStringLiteral("ppm"), QStringLiteral("-s"),
-         QString::number(capture.monitor.scale, 'g', 8), QStringLiteral("-o"),
-         capture.monitor.name, QStringLiteral("-")},
-        {}, 10000);
-    if (!grim.finished || grim.exitCode != 0 ||
-        !capture.source.loadFromData(grim.output, "PPM")) {
-      error = QStringLiteral("Screen capture failed: %1")
-                  .arg(processFailure(grim));
-      return false;
-    }
+  } else if (!captureOutputSurface(monitor, capture.source, error)) {
+    if (!error.startsWith(QStringLiteral("Screen capture failed:")))
+      error = QStringLiteral("Screen capture failed: %1").arg(error);
+    return false;
   }
   startupTimingMark("output pixels available");
 

@@ -14,7 +14,6 @@
         let
           pkgs = import nixpkgs { inherit system; };
           runtimePackages = with pkgs; [
-            grim
             libnotify
             tesseract
             wl-clipboard
@@ -146,7 +145,6 @@
             inputsFrom = [ self.packages.${system}.omasnap ];
             packages = with pkgs; [
               clang-tools
-              grim
               libnotify
               nixfmt
               shellcheck

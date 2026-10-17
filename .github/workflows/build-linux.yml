@@ -20,7 +20,7 @@ jobs:
         run: >-
           pacman -Syu --noconfirm --needed
           base-devel cmake ninja pkgconf qt6-base layer-shell-qt
-          wayland wayland-protocols libdeflate grim libnotify wl-clipboard
+          wayland wayland-protocols libdeflate libnotify wl-clipboard
           tesseract tesseract-data-eng clang
 
       - name: Check out source

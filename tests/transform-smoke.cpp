@@ -1,8 +1,10 @@
-/** @fileoverview Tests Niri discovery and clean capture command integration. */
+/** @fileoverview Tests Niri discovery, clean window capture, Wayland capture
+ *  transforms, and capture object cleanup. */
 #include "transform-smoke.hpp"
 
 #include "capture.hpp"
 #include "editor.hpp"
+#include "surface-capture-smoke.hpp"
 
 #include <QApplication>
 #include <QDir>
@@ -12,6 +14,9 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QVector>
+
+#include <wayland-client-protocol.h>
 
 #include <atomic>
 #include <chrono>
@@ -29,9 +34,46 @@ bool writeExecutable(const QString &path, const QByteArray &contents) {
                                          QFileDevice::WriteOwner |
                                          QFileDevice::ExeOwner);
 }
+/** Creates a small image whose red channel stores easy-to-check values. */
+QImage indexedImage(const QVector<QVector<int>> &rows) {
+  QImage image(rows.constFirst().size(), rows.size(), QImage::Format_RGB32);
+  for (int y = 0; y < rows.size(); ++y) {
+    for (int x = 0; x < rows.at(y).size(); ++x)
+      image.setPixelColor(x, y, QColor(rows.at(y).at(x), 0, 0));
+  }
+  return image;
+}
+
+bool runNormalizeChecks(QString &error) {
+  const QImage upright = indexedImage({{1, 2}, {3, 4}, {5, 6}});
+  const QVector<QPair<std::uint32_t, QImage>> transformedImages{
+      {WL_OUTPUT_TRANSFORM_NORMAL, upright},
+      {WL_OUTPUT_TRANSFORM_90, indexedImage({{2, 4, 6}, {1, 3, 5}})},
+      {WL_OUTPUT_TRANSFORM_180, indexedImage({{6, 5}, {4, 3}, {2, 1}})},
+      {WL_OUTPUT_TRANSFORM_270, indexedImage({{5, 3, 1}, {6, 4, 2}})},
+      {WL_OUTPUT_TRANSFORM_FLIPPED, indexedImage({{2, 1}, {4, 3}, {6, 5}})},
+      {WL_OUTPUT_TRANSFORM_FLIPPED_90, indexedImage({{1, 3, 5}, {2, 4, 6}})},
+      {WL_OUTPUT_TRANSFORM_FLIPPED_180, indexedImage({{5, 6}, {3, 4}, {1, 2}})},
+      {WL_OUTPUT_TRANSFORM_FLIPPED_270, indexedImage({{6, 4, 2}, {5, 3, 1}})},
+  };
+  for (const auto &[transform, transformed] : transformedImages) {
+    if (normalizeWaylandCapture(transformed, transform) != upright) {
+      error = QStringLiteral("Captured Wayland buffer was not upright");
+      return false;
+    }
+  }
+  return true;
+}
 } // namespace
 
 bool runTransformSmoke(QString &error) {
+  if (!runWaylandCleanupChecks()) {
+    error =
+        QStringLiteral("Wayland capture objects were not released in order");
+    return false;
+  }
+  if (!runNormalizeChecks(error))
+    return false;
   QTemporaryDir fakeCommands;
   if (!fakeCommands.isValid()) {
     error = QStringLiteral("Could not create Niri capture-test directory");
@@ -39,10 +81,10 @@ bool runTransformSmoke(QString &error) {
   }
 
   const QString outputImage =
-      QDir(fakeCommands.path()).filePath(QStringLiteral("output.ppm"));
+      QDir(fakeCommands.path()).filePath(QStringLiteral("output.png"));
   QImage output(450, 300, QImage::Format_RGB32);
   output.fill(QColor(QStringLiteral("#123456")));
-  if (!output.save(outputImage, "PPM")) {
+  if (!output.save(outputImage, "PNG")) {
     error = QStringLiteral("Could not create output capture fixture");
     return false;
   }
@@ -110,9 +152,6 @@ bool runTransformSmoke(QString &error) {
       "    ;;\n"
       "  *) exit 2 ;;\n"
       "esac\n");
-  const QByteArray grimScript = scriptHeader + QByteArrayLiteral(
-      "set -euo pipefail\n"
-      "cat \"$OMASNAP_TEST_OUTPUT_IMAGE\"\n");
   const QByteArray pasteScript = scriptHeader + QByteArrayLiteral(
       "set -euo pipefail\n"
       "if [[ \"${1:-}\" == --list-types ]]; then\n"
@@ -129,8 +168,6 @@ bool runTransformSmoke(QString &error) {
 
   if (!writeExecutable(QDir(fakeCommands.path()).filePath(QStringLiteral("niri")),
                        niriScript) ||
-      !writeExecutable(QDir(fakeCommands.path()).filePath(QStringLiteral("grim")),
-                       grimScript) ||
       !writeExecutable(
           QDir(fakeCommands.path()).filePath(QStringLiteral("wl-paste")),
           pasteScript) ||
@@ -142,7 +179,7 @@ bool runTransformSmoke(QString &error) {
 
   const QByteArray originalPath = qgetenv("PATH");
   qputenv("PATH", fakeCommands.path().toUtf8() + ':' + originalPath);
-  qputenv("OMASNAP_TEST_OUTPUT_IMAGE", outputImage.toUtf8());
+  qputenv("OMASNAP_TEST_CAPTURE", outputImage.toUtf8());
   qputenv("OMASNAP_TEST_WINDOW_IMAGE", windowImage.toUtf8());
   qputenv("OMASNAP_TEST_CLIPBOARD", clipboard.toUtf8());
   qputenv("OMASNAP_TEST_CLIPBOARD_TYPE", clipboardType.toUtf8());
@@ -150,7 +187,7 @@ bool runTransformSmoke(QString &error) {
   qputenv("OMASNAP_TEST_SCREENSHOT_RELEASE", screenshotRelease.toUtf8());
   const auto restoreEnvironment = [&originalPath] {
     qputenv("PATH", originalPath);
-    qunsetenv("OMASNAP_TEST_OUTPUT_IMAGE");
+    qunsetenv("OMASNAP_TEST_CAPTURE");
     qunsetenv("OMASNAP_TEST_WINDOW_IMAGE");
     qunsetenv("OMASNAP_TEST_CLIPBOARD");
     qunsetenv("OMASNAP_TEST_CLIPBOARD_TYPE");
@@ -173,6 +210,19 @@ bool runTransformSmoke(QString &error) {
     restoreEnvironment();
     return false;
   }
+
+  // Without a test capture, an output the compositor cannot capture fails
+  // clearly instead of returning an empty frame.
+  qunsetenv("OMASNAP_TEST_CAPTURE");
+  CaptureData missingOutput;
+  QString missingError;
+  if (captureFocusedMonitor(missingOutput, missingError) ||
+      !missingError.startsWith(QStringLiteral("Screen capture failed:"))) {
+    error = QStringLiteral("Uncapturable output did not report an error");
+    restoreEnvironment();
+    return false;
+  }
+  qputenv("OMASNAP_TEST_CAPTURE", outputImage.toUtf8());
 
   QString focusedOutput;
   if (!queryFocusedOutputName(focusedOutput, error) ||

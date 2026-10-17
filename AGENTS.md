@@ -10,8 +10,9 @@ markers, text, OCR). Finished captures go to clipboard,
 
 - **Speed first.** The tool must feel instant: capture, annotate, copy. No
   startup bloat, no settings UI, no wizards.
-- **Niri only.** Output discovery uses Niri JSON IPC, monitor capture uses `grim`,
-  and clean focused-window capture uses Niri's screenshot action. No X11,
+- **Niri only.** Output discovery uses Niri JSON IPC, monitor and scroll capture
+  use the in-process `ext-image-copy-capture` backend, and clean focused-window
+  capture uses Niri's screenshot action. No X11,
   macOS/Windows, Hyprland, or generic-compositor support.
 - **No backwards compatibility.** Break keybindings, CLI flags, file formats,
   or internals whenever it keeps the code simpler or the tool faster. Do not
@@ -56,8 +57,9 @@ Always run `make check` after behavioral changes. CI
 (`.github/workflows/build-linux.yml`) runs the same build and smoke on every
 push and PR.
 
-Dependencies (Arch): `base-devel cmake ninja qt6-base layer-shell-qt grim
-libnotify niri wl-clipboard tesseract tesseract-data-eng`.
+Dependencies (Arch): `base-devel cmake ninja pkgconf qt6-base layer-shell-qt
+wayland wayland-protocols libdeflate libnotify niri wl-clipboard tesseract
+tesseract-data-eng`.
 
 ## Release process
 

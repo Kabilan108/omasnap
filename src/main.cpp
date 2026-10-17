@@ -418,7 +418,8 @@ int main(int argc, char **argv) {
   startupTimingMark(editingImage ? "input image prepared"
                                  : "focused monitor probed");
 
-  // Grab the output before the layer exists so the overlay is never captured.
+  // Grab the output before the layer exists. ext-image-copy-capture waits for
+  // a composited frame, so mapping the dim overlay first photographs the veil.
   const bool instantFullscreenOutput =
       !editingImage && captureMode == CaptureEditor::CaptureMode::Fullscreen &&
       quickOutputMode != QuickOutputMode::None &&

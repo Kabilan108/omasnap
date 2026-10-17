@@ -291,7 +291,7 @@ bool createShmBuffer(CaptureState &state, QString &error) {
     return false;
   }
   char name[96];
-  std::snprintf(name, sizeof(name), "/omarchy-capture-%d-%p", getpid(),
+  std::snprintf(name, sizeof(name), "/omasnap-capture-%d-%p", getpid(),
                 static_cast<void *>(&state));
   state.fd = shm_open(name, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
   if (state.fd < 0) {

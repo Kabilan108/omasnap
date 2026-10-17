@@ -1,8 +1,8 @@
 /** @fileoverview Manual scroll capture: an overlay that dims the screen around
  *  a chosen region, lets the user scroll the page beneath it, grabs a frame
  *  per scroll step through the live output-capture session, and stitches them
- *  into one tall image with the pure stitcher. Ties together the keyboard-
- *  interactivity zone, ext-image-copy-capture output capture, and stitch.hpp.
+ *  into one tall image with the pure stitcher. Ties together the input-region
+ *  hole, ext-image-copy-capture output capture, and stitch.hpp.
  *  The capture loop (grab → crop → classify → accumulate) runs on a worker
  *  thread so the overlay stays responsive. In manual mode small movements
  *  are held as a replaceable pending frame until they grow
@@ -79,22 +79,23 @@ class Window;
 /// as a child covering the surface. It takes over once a region has been
 /// drawn (the editor's own region selection is the selection): choose manual
 /// or automatic, scroll, or let the injection worker scroll, and stitch. It
-/// manages the layer's input hole and keyboard grab while it is up, and
+/// manages the layer's input hole while it is up, and
 /// hands back with stitched() or dismissed().
 class ScrollCapturePanel final : public QWidget {
   Q_OBJECT
 public:
-  /// `layer` is the surface the editor lives on; the panel toggles its
-  /// keyboard interactivity and input mask while it is up and restores both
-  /// on destruction. Null (headless tests) leaves both alone.
+  /// `layer` is the surface the editor lives on; the panel sets its input mask
+  /// while it is up and clears it on destruction. The layer keeps exclusive
+  /// keyboard focus throughout: Niri routes pointer input through the hole by
+  /// position alone, so the page still scrolls while Enter and Escape reach
+  /// the panel. Null (headless tests) leaves the surface alone.
   ScrollCapturePanel(MonitorInfo monitor, LayerShellQt::Window *layer,
                      QWidget *parent);
   ~ScrollCapturePanel() override;
   /// Take over with `region` (logical surface pixels, clamped to the
   /// surface and the controls) already drawn. Call once, after show().
   void begin(const QRect &region);
-  /// Stops any worker, hands the surface back whole (no hole, keyboard
-  /// exclusive again) and hides. Safe to call from inside one of this
+  /// Stops any worker, hands the surface back whole (no hole) and hides. Safe to call from inside one of this
   /// panel's own signals; the destructor calls it too.
   void release();
 signals:
@@ -142,17 +143,10 @@ private:
   void stopWorker();
   void finishCapture();
   void cancel();
-  /// Region chosen (dragged or restored): remember it, expose the page, hand
-  /// the keyboard over by zone, and offer the modes.
+  /// Region chosen (dragged or restored): remember it, expose the page, and
+  /// offer the modes.
   void enterSelected();
   void applyInputRegion();
-  /// Takes exclusive keyboard focus over the chrome, or switches to on-demand
-  /// focus over the live page. Hyprland pins pointer focus to an exclusive
-  /// layer, so the grab must be released for the page to stay scrollable.
-  void setKeyboardGrab(bool grab);
-  /// Holds the grab only while the pointer is on the overlay's own chrome, and
-  /// only when an event has said where the pointer is.
-  void updateKeyboardZone(const QPoint &point);
   /// Restarts the capture in the other mode, keeping the region.
   void switchMode(Mode mode);
   /// Where the injector parks the pointer for auto-scroll (physical pixels):
@@ -219,9 +213,6 @@ private:
   Grip activeGrip_ = Grip::None;
   QRect gripStartRegion_;
   QPoint gripStartPoint_;
-  /// Whether the layer currently holds the exclusive keyboard grab: only
-  /// while the pointer is on our chrome, never over the live page.
-  bool keyboardGrabbed_ = true;
 
   std::unique_ptr<Worker> worker_;
   QFuture<void> workerFuture_;

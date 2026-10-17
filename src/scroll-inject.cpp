@@ -4,16 +4,8 @@
 #include "wlr-virtual-pointer-unstable-v1-client-protocol.h"
 
 #include <QDebug>
-#include <QProcess>
 
 #include <wayland-client.h>
-
-#include <linux/input-event-codes.h>
-#include <linux/uinput.h>
-
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
@@ -35,7 +27,6 @@ using stitch::CaptureHandshake;
 // this only keeps the tick and the ready announcement from racing.
 constexpr int kScrollSettleMs = 30;
 constexpr int kInputRegionSettleMs = 50;
-constexpr int kUinputDeviceSettleMs = 150;
 constexpr int kPointerNudgeSettleMs = 20;
 /// One logical wheel notch for the wlr virtual pointer.
 constexpr double kNotchValue = 10.0;
@@ -55,98 +46,6 @@ bool sleepUnlessStopped(int ms, const std::atomic<bool> &stop) {
   }
   return !stop.load(std::memory_order_acquire);
 }
-
-/// The compositor applies the user's natural-scroll policy to a real kernel
-/// mouse, so uinput injection must pre-compensate, and is only safe when the
-/// policy is actually known.
-std::optional<bool> hyprlandNaturalScroll() {
-  if (qEnvironmentVariable("HYPRLAND_INSTANCE_SIGNATURE").isEmpty())
-    return std::nullopt;
-  QProcess process;
-  process.start(QStringLiteral("hyprctl"),
-                {QStringLiteral("getoption"), QStringLiteral("input:natural_scroll"),
-                 QStringLiteral("-j")});
-  if (!process.waitForFinished(2000) || process.exitCode() != 0)
-    return std::nullopt;
-  const QByteArray out = process.readAllStandardOutput();
-  const int key = out.indexOf("\"bool\"");
-  if (key < 0)
-    return std::nullopt;
-  const int colon = out.indexOf(':', key);
-  if (colon < 0)
-    return std::nullopt;
-  const QByteArray tail = out.mid(colon + 1).trimmed();
-  if (tail.startsWith("true"))
-    return true;
-  if (tail.startsWith("false"))
-    return false;
-  return std::nullopt;
-}
-
-// --- uinput kernel mouse ------------------------------------------------------
-class UinputMouse {
-public:
-  bool open(QString &error) {
-    fd_ = ::open("/dev/uinput", O_WRONLY | O_NONBLOCK);
-    if (fd_ < 0) {
-      error = QStringLiteral("could not open /dev/uinput");
-      return false;
-    }
-    ioctl(fd_, UI_SET_EVBIT, EV_REL);
-    for (const int axis : {REL_X, REL_Y, REL_WHEEL, REL_HWHEEL})
-      ioctl(fd_, UI_SET_RELBIT, axis);
-    // libinput requires a button before udev classifies the device as a
-    // mouse (so the natural-scroll policy applies); advertised, never
-    // emitted.
-    ioctl(fd_, UI_SET_EVBIT, EV_KEY);
-    ioctl(fd_, UI_SET_KEYBIT, BTN_LEFT);
-    uinput_setup setup{};
-    setup.id.bustype = BUS_USB;
-    setup.id.vendor = 0x1d6b;
-    setup.id.product = 0x0001;
-    std::strncpy(setup.name, "Omasnap Auto Scroll", sizeof(setup.name) - 1);
-    if (ioctl(fd_, UI_DEV_SETUP, &setup) < 0 || ioctl(fd_, UI_DEV_CREATE) < 0) {
-      error = QStringLiteral("uinput device setup failed");
-      close();
-      return false;
-    }
-    return true;
-  }
-  bool nudge() {
-    // ±1 px so the compositor re-hit-tests the surface under the pointer.
-    if (!emitEvent(EV_REL, REL_X, 1) || !emitEvent(EV_SYN, SYN_REPORT, 0))
-      return false;
-    sleepMs(kPointerNudgeSettleMs);
-    return emitEvent(EV_REL, REL_X, -1) && emitEvent(EV_SYN, SYN_REPORT, 0);
-  }
-  bool scroll(Axis axis, int notches, bool naturalScroll) {
-    // REL_WHEEL follows the physical wheel: negative = down; HWHEEL positive
-    // = right. The compositor then applies natural-scroll, so pre-negate.
-    const int code = axis == Axis::Vertical ? REL_WHEEL : REL_HWHEEL;
-    int amount = axis == Axis::Vertical ? -notches : notches;
-    if (naturalScroll)
-      amount = -amount;
-    return emitEvent(EV_REL, code, amount) && emitEvent(EV_SYN, SYN_REPORT, 0);
-  }
-  void close() {
-    if (fd_ >= 0) {
-      ioctl(fd_, UI_DEV_DESTROY);
-      ::close(fd_);
-      fd_ = -1;
-    }
-  }
-  ~UinputMouse() { close(); }
-
-private:
-  bool emitEvent(int type, int code, int value) {
-    input_event event{};
-    event.type = static_cast<std::uint16_t>(type);
-    event.code = static_cast<std::uint16_t>(code);
-    event.value = value;
-    return write(fd_, &event, sizeof(event)) == sizeof(event);
-  }
-  int fd_ = -1;
-};
 
 // --- wlr virtual pointer ------------------------------------------------------
 struct WlrPointer {
@@ -196,8 +95,8 @@ struct WlrPointer {
   void scroll(Axis axis, int notches) {
     if (!pointer)
       return;
-    // One aggregate discrete event, axis_source AFTER axis_discrete
-    // (Hyprland ties the source to the most recent axis), one frame.
+    // One aggregate discrete event, axis_source after axis_discrete, one
+    // frame.
     const std::uint32_t wlAxis = axis == Axis::Vertical ? 0 : 1;
     zwlr_virtual_pointer_v1_axis_discrete(
         pointer, timeMs(), wlAxis, wl_fixed_from_double(kNotchValue * notches),
@@ -349,78 +248,31 @@ bool spawnScrollInjector(std::shared_ptr<std::atomic<bool>> stop,
                          std::shared_ptr<stitch::CaptureHandshake> handshake,
                          int parkX, int parkY, stitch::Axis axis,
                          const QString &outputName, QString &error) {
-  // Called on a setup worker: probing may block, but never owns UI state.
+  // Called on a setup worker: connecting may block, but never owns UI state.
   if (stop->load(std::memory_order_acquire))
     return false;
-  const std::optional<bool> naturalScroll = hyprlandNaturalScroll();
+  std::shared_ptr<WlrPointer> wlr = connectWlrPointer(outputName, error);
   if (stop->load(std::memory_order_acquire))
     return false;
-  auto uinput = std::make_shared<UinputMouse>();
-  bool haveUinput = false;
-  if (naturalScroll) {
-    QString uinputError;
-    haveUinput = uinput->open(uinputError);
-    if (!haveUinput)
-      qInfo().noquote()
-          << QStringLiteral("scroll-inject: uinput unavailable (%1); using the "
-                            "virtual pointer")
-                 .arg(uinputError);
-  } else {
-    qInfo().noquote() << QStringLiteral(
-        "scroll-inject: natural-scroll policy unknown; using the virtual "
-        "pointer");
-  }
-  // The wlr pointer parks the cursor for both backends (and scrolls when
-  // uinput is unavailable).
-  QString wlrError;
-  std::shared_ptr<WlrPointer> wlr = connectWlrPointer(outputName, wlrError);
-  if (stop->load(std::memory_order_acquire))
-    return false;
-  if (!wlr && !haveUinput) {
-    error = wlrError;
-    return false;
-  }
   if (!wlr)
-    qInfo().noquote() << QStringLiteral(
-                             "scroll-inject: no virtual pointer (%1); cannot "
-                             "park · scrolling wherever the cursor is")
-                             .arg(wlrError);
-  qInfo().noquote() << QStringLiteral(
-                           "scroll-inject: backend=%1 natural=%2 park=%3,%4 on %5")
-                           .arg(haveUinput ? QStringLiteral("uinput")
-                                           : QStringLiteral("wlr-pointer"))
-                           .arg(naturalScroll ? (*naturalScroll ? "true" : "false")
-                                              : "unknown")
+    return false;
+  qInfo().noquote() << QStringLiteral("scroll-inject: park=%1,%2 on %3")
                            .arg(parkX)
                            .arg(parkY)
                            .arg(outputName);
 
-  std::thread([stop, handshake, uinput, haveUinput, wlr, parkX, parkY, axis,
-               natural = naturalScroll.value_or(false)] {
-    // Let the overlay's input-region commit land, then settle the device and
-    // park inside the selection so wheel events hit the page.
-    if (!sleepUnlessStopped(kInputRegionSettleMs, *stop) ||
-        (haveUinput && !sleepUnlessStopped(kUinputDeviceSettleMs, *stop)))
+  std::thread([stop, handshake, wlr, parkX, parkY, axis] {
+    // Let the overlay's input-region commit land, then park inside the
+    // selection so wheel events hit the page.
+    if (!sleepUnlessStopped(kInputRegionSettleMs, *stop))
       return;
-    if (wlr)
-      wlr->park(parkX, parkY);
-    if (haveUinput && !uinput->nudge()) {
-      qWarning().noquote()
-          << QStringLiteral("scroll-inject: pointer nudge failed");
-      stop->store(true, std::memory_order_release);
-      return;
-    }
+    wlr->park(parkX, parkY);
     const std::function<bool(int)> inject = [&](int notches) {
       qInfo().noquote() << QStringLiteral("scroll-inject: tick %1 notch%2")
                                .arg(notches)
                                .arg(notches == 1 ? QString() : QStringLiteral("es"));
-      if (haveUinput)
-        return uinput->scroll(axis, notches, natural);
-      if (wlr) {
-        wlr->scroll(axis, notches);
-        return true;
-      }
-      return false;
+      wlr->scroll(axis, notches);
+      return true;
     };
     runCaptureScrollLoop(stop, handshake, inject);
     // Worker death is always observable through the one flag.
