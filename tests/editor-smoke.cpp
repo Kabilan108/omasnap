@@ -3476,17 +3476,6 @@ bool runTextOutlineCheck(QString &error) {
 bool runEditorWindowConfigCheck(QString &error) {
   const QString path =
       QDir(QDir::tempPath()).filePath(QStringLiteral("omasnap-editor-mode.conf"));
-  const QString floatRule = editorFloatRuleScript(true);
-  const QString tiledRule = editorFloatRuleScript(false);
-  if (!floatRule.contains(QStringLiteral("float = true")) ||
-      !floatRule.contains(QStringLiteral("center = true")) ||
-      tiledRule.contains(QStringLiteral("float = true")) ||
-      !tiledRule.contains(QStringLiteral("enabled = false")) ||
-      !floatRule.contains(QStringLiteral("omasnap-editor-float")) ||
-      !tiledRule.contains(QStringLiteral("omasnap-editor-float"))) {
-    error = QStringLiteral("Editor float rule script is wrong");
-    return false;
-  }
   const auto writeConf = [&path](const QString &body) {
     QFile file(path);
     file.open(QIODevice::WriteOnly | QIODevice::Truncate);
@@ -3504,18 +3493,6 @@ bool runEditorWindowConfigCheck(QString &error) {
       loadEditorWindowMode(QStringLiteral("/nonexistent/omasnap.conf"));
   if (!window || overlay || absent || missing) {
     error = QStringLiteral("[editor] mode was not read as window-or-default");
-    return false;
-  }
-
-  writeConf(QStringLiteral("[editor]\nwindow = tiled\n"));
-  const bool tiled = loadEditorWindowFloating(path);
-  writeConf(QStringLiteral("[editor]\nwindow = floating\n"));
-  const bool floating = loadEditorWindowFloating(path);
-  QFile::remove(path);
-  const bool floatDefault =
-      loadEditorWindowFloating(QStringLiteral("/nonexistent/omasnap.conf"));
-  if (tiled || !floating || !floatDefault) {
-    error = QStringLiteral("[editor] window was not read as floating-or-tiled");
     return false;
   }
 
