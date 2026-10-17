@@ -443,6 +443,19 @@ bool runPinInteractionChecks(QString &error) {
     if (!expectTimed(QStringLiteral("Using control %1").arg(control)))
       return false;
   }
+  // Edit and Reveal open another window that needs the keyboard, even while
+  // the pointer stays on the pin.
+  for (const int control : {3, 6}) {
+    QApplication::sendEvent(&window, &hoverMove);
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
+                      pinControlRect(window.size(), control).center().toPoint());
+    if (layer->keyboardInteractivity() == LayerShellQt::Window::KeyboardInteractivityExclusive) {
+      error = QStringLiteral("Control %1 kept the keyboard from the window it opened")
+                  .arg(control);
+      return false;
+    }
+    drainActions();
+  }
   for (const Qt::Key key : {Qt::Key_C, Qt::Key_L, Qt::Key_E, Qt::Key_R}) {
     QApplication::sendEvent(&window, &enter);
     QTest::keyClick(&window, key);

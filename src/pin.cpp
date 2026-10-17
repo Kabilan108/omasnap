@@ -359,6 +359,7 @@ protected:
   }
 
   void mousePressEvent(QMouseEvent *event) override {
+    lastPointer_ = event->position();
     pendingKeyboard_ = false;
     setKeyboardFocus(true);
     if (event->button() == Qt::MiddleButton) {
@@ -404,6 +405,7 @@ protected:
 
   void mouseMoveEvent(QMouseEvent *event) override {
     const QPointF position = event->position();
+    lastPointer_ = position;
     if (pendingKeyboard_ && position != pendingPosition_) {
       pendingKeyboard_ = false;
       setKeyboardFocus(true);
@@ -505,6 +507,7 @@ protected:
     // A pin that maps under a resting pointer receives an enter at once.
     // That one waits for pointer motion or a click before taking the keyboard;
     // the pointer moving onto a pin later takes it immediately.
+    lastPointer_ = event->position();
     if (!shownClock_.isValid() || shownClock_.elapsed() < kMapEnterMs) {
       pendingKeyboard_ = true;
       pendingPosition_ = event->position();
@@ -597,7 +600,18 @@ private:
     }, QStringLiteral("Copied path"));
   }
 
+  // The editor or file manager this opens needs the keyboard even while the
+  // pointer stays on the pin; fresh motion over the pin takes it back.
+  void yieldKeyboard() {
+    setKeyboardFocus(false);
+    if (hovered_) {
+      pendingKeyboard_ = true;
+      pendingPosition_ = lastPointer_;
+    }
+  }
+
   void revealFile() {
+    yieldKeyboard();
     runAction([path = path_, shared = sharedPath_] {
       QString error;
       const QString saved = sharedPinPath(path, shared, error);
@@ -608,6 +622,7 @@ private:
   }
 
   void reopenInEditor() {
+    yieldKeyboard();
     const QString output = screen() ? screen()->name() : QString();
     runAction([program = QCoreApplication::applicationFilePath(), path = path_,
                document = pinDocument_, output]() mutable -> ActionResult {
@@ -762,6 +777,7 @@ private:
   QElapsedTimer shownClock_;
   bool pendingKeyboard_ = false;
   QPointF pendingPosition_;
+  QPointF lastPointer_;
   int hoveredControl_ = -1;
 
 };
