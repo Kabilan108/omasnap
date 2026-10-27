@@ -63,7 +63,7 @@ covers.
 | `src/png.cpp/.hpp` | Fast libdeflate PNG writer with logical-size metadata |
 | `src/cut.cpp/.hpp`, `src/text-band.cpp/.hpp`, `src/stroke-smoothing.cpp/.hpp`, `src/eyedropper.cpp/.hpp`, `src/icons.cpp/.hpp` | Editing helpers and the vector icon renderer |
 | `tests/*-smoke.cpp/.hpp` | Headless Qt Test coverage, including fake `niri`/`wl-copy`/`wl-paste` commands |
-| `docs/` | Principles in depth, plus the upstream integration records (`upstream-v1.17.1-integration.md`, `upstream-v1.21-integration.md`) |
+| `docs/` | Principles in depth, the upstream integration records (`upstream-v*-integration.md`), and the maintainer playbook and sync state (`maintaining.md`, `upstream-sync.md`) |
 | `flake.nix` | Nix package, runtime dependencies, development shell, and package check |
 | `CMakeLists.txt` | Build definition; **the version lives here** (`project(omasnap VERSION ...)`) |
 
@@ -95,11 +95,20 @@ tesseract tesseract-data-eng`.
 
 ## Release process
 
-1. Bump `project(omasnap VERSION ...)` in `CMakeLists.txt` and `version` in
-   `flake.nix`.
+Versions are release dates, independent of upstream's numbers: `2026.11.03`, then
+`2026.11.03.1` for a second release that day. The last semver release was 1.21.2.
+`omasnap --version` also prints `OMASNAP_UPSTREAM_BASE`, the upstream commit the
+release integrates; name it in the release notes too.
+
+1. Set `project(omasnap VERSION ...)` in `CMakeLists.txt` and `version` in
+   `flake.nix` to the release version. When the release integrates upstream work,
+   also set `OMASNAP_UPSTREAM_BASE`.
 2. Build and run the smoke test (above).
-3. Commit, tag `v<version>`, push `niri-native` and the tag. The GitHub workflow
+3. Commit, tag `v<version>`, push `niri-native` and that one tag. The GitHub workflow
    attaches the build artifact to the release automatically.
+
+Upstream integration cycles, run by the maintainer thread, follow
+[docs/maintaining.md](docs/maintaining.md).
 
 See `README.md` for user-facing features, keybindings, and install instructions —
 keep it in sync when behavior changes.
