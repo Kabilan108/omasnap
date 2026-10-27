@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(omasnap VERSION 1.21.2 LANGUAGES C CXX)
+# The upstream commit this release integrates, as `git describe --tags --long
+# --match 'upstream/*'` names it without the "upstream/" prefix.
+set(OMASNAP_UPSTREAM_BASE "v1.21.0-81-g6771b19")
 include(GNUInstallDirs)
 include(CTest)
 set(CMAKE_AUTOMOC ON)
@@ -148,7 +151,8 @@ target_link_libraries(omasnap-core PUBLIC
 
 qt_add_executable(omasnap src/main.cpp src/pin.cpp src/pin.hpp)
 target_compile_options(omasnap PRIVATE -Wall -Wextra -Wpedantic)
-target_compile_definitions(omasnap PRIVATE OMASNAP_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(omasnap PRIVATE OMASNAP_VERSION="${PROJECT_VERSION}"
+                                           OMASNAP_UPSTREAM_BASE="${OMASNAP_UPSTREAM_BASE}")
 set_target_properties(omasnap PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE)
 target_link_libraries(omasnap PRIVATE omasnap-core)
 target_precompile_headers(omasnap REUSE_FROM omasnap-core)

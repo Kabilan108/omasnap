@@ -155,7 +155,10 @@ private:
 int main(int argc, char **argv) {
   startupTimingMark("entered main");
   QCoreApplication::setApplicationName(QStringLiteral("omasnap"));
-  QCoreApplication::setApplicationVersion(QString::fromLatin1(OMASNAP_VERSION));
+  QCoreApplication::setApplicationVersion(
+      QStringLiteral("%1 (upstream %2)")
+          .arg(QLatin1StringView(OMASNAP_VERSION),
+               QLatin1StringView(OMASNAP_UPSTREAM_BASE)));
   QCoreApplication::setOrganizationName(QStringLiteral("Omasnap"));
   // Resolve editor presentation before Qt consumes its own command-line flags.
   QStringList rawArguments;
