@@ -1197,17 +1197,15 @@ QRect pixelSelection(const CaptureData &capture, const QRectF &selection) {
   // Pointer positions fall between pixels. Snap the origin to the nearest
   // pixel and keep the rounded size, so the export carries the native size
   // the measurement readout showed instead of every pixel an edge touches.
+  const int width = std::clamp(qRound(bounded.width() * scaleX), 1,
+                               capture.source.width());
+  const int height = std::clamp(qRound(bounded.height() * scaleY), 1,
+                                capture.source.height());
   const int left = std::clamp(qRound(bounded.left() * scaleX), 0,
-                              capture.source.width() - 1);
+                              capture.source.width() - width);
   const int top = std::clamp(qRound(bounded.top() * scaleY), 0,
-                             capture.source.height() - 1);
-  const int right =
-      std::min(left + std::max(1, qRound(bounded.width() * scaleX)),
-               capture.source.width());
-  const int bottom =
-      std::min(top + std::max(1, qRound(bounded.height() * scaleY)),
-               capture.source.height());
-  return QRect(QPoint(left, top), QPoint(right - 1, bottom - 1));
+                             capture.source.height() - height);
+  return {left, top, width, height};
 }
 
 } // namespace

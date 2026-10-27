@@ -1524,6 +1524,12 @@ bool runSecureRedactionChecks(QString &error) {
       betweenOutput.pixelColor(0, 0) != QColor(10, 21, 0) ||
       betweenOutput.pixelColor(49, 59) != QColor(59, 80, 0))
     return false;
+  // Flush with the far edge, the rounded size wins over the rounded origin.
+  const QImage edgeOutput = renderCapture(
+      between, QRectF(150.5, 0, 49.5, 10), {}, BackgroundStyle::None);
+  if (edgeOutput.size() != QSize(50, 10) ||
+      edgeOutput.pixelColor(0, 0) != QColor(150, 0, 0))
+    return false;
 
   CaptureData matchingFractional;
   matchingFractional.monitor.scale = 1.25;
