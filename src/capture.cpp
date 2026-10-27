@@ -1188,23 +1188,24 @@ QSizeF captureOutputScale(const CaptureData &capture) {
 QRect pixelSelection(const CaptureData &capture, const QRectF &selection) {
   const QRectF bounded = selection.normalized().intersected(
       QRectF(QPointF(), capture.previewSize));
+  if (bounded.isEmpty())
+    return {};
   const qreal scaleX =
       capture.source.width() / static_cast<qreal>(capture.previewSize.width());
   const qreal scaleY =
       capture.source.height() / static_cast<qreal>(capture.previewSize.height());
-  const int left =
-      std::clamp(static_cast<int>(std::floor(bounded.left() * scaleX)), 0,
-                 capture.source.width());
-  const int top =
-      std::clamp(static_cast<int>(std::floor(bounded.top() * scaleY)), 0,
-                 capture.source.height());
-  const int right =
-      std::clamp(static_cast<int>(std::ceil(bounded.right() * scaleX)), left,
-                 capture.source.width());
-  const int bottom =
-      std::clamp(static_cast<int>(std::ceil(bounded.bottom() * scaleY)), top,
-                 capture.source.height());
-  return QRect(QPoint(left, top), QPoint(right - 1, bottom - 1));
+  // Pointer positions fall between pixels. Snap the origin to the nearest
+  // pixel and keep the rounded size, so the export carries the native size
+  // the measurement readout showed instead of every pixel an edge touches.
+  const int width = std::clamp(qRound(bounded.width() * scaleX), 1,
+                               capture.source.width());
+  const int height = std::clamp(qRound(bounded.height() * scaleY), 1,
+                                capture.source.height());
+  const int left = std::clamp(qRound(bounded.left() * scaleX), 0,
+                              capture.source.width() - width);
+  const int top = std::clamp(qRound(bounded.top() * scaleY), 0,
+                             capture.source.height() - height);
+  return {left, top, width, height};
 }
 
 } // namespace

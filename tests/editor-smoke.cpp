@@ -1508,6 +1508,29 @@ bool runSecureRedactionChecks(QString &error) {
       fractionalOutput.pixelColor(12, 12) != solidColor)
     return false;
 
+  // Pointer positions fall between pixels. The export keeps the rounded
+  // size the measurement readout shows, from the nearest pixel origin.
+  CaptureData between;
+  between.monitor.scale = 1.0;
+  between.previewSize = QSize(200, 200);
+  between.source = QImage(200, 200, QImage::Format_RGB32);
+  for (int y = 0; y < 200; ++y) {
+    for (int x = 0; x < 200; ++x)
+      between.source.setPixelColor(x, y, QColor(x, y, 0));
+  }
+  const QImage betweenOutput = renderCapture(
+      between, QRectF(10.3, 20.6, 50.0, 60.4), {}, BackgroundStyle::None);
+  if (betweenOutput.size() != QSize(50, 60) ||
+      betweenOutput.pixelColor(0, 0) != QColor(10, 21, 0) ||
+      betweenOutput.pixelColor(49, 59) != QColor(59, 80, 0))
+    return false;
+  // Flush with the far edge, the rounded size wins over the rounded origin.
+  const QImage edgeOutput = renderCapture(
+      between, QRectF(150.5, 0, 49.5, 10), {}, BackgroundStyle::None);
+  if (edgeOutput.size() != QSize(50, 10) ||
+      edgeOutput.pixelColor(0, 0) != QColor(150, 0, 0))
+    return false;
+
   CaptureData matchingFractional;
   matchingFractional.monitor.scale = 1.25;
   matchingFractional.previewSize = QSize(160, 160);

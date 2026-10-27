@@ -12,10 +12,13 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFutureWatcher>
+#include <QHeaderView>
 #include <QObject>
 #include <QPromise>
+#include <QScreen>
 #include <QString>
 #include <QTimer>
+#include <QTreeView>
 #include <Qt>
 #include <QtTypes>
 #include <QtLogging>
@@ -71,7 +74,9 @@ void CaptureEditor::showSaveAsDialog(const QString &suggested) {
   dialog->setObjectName(QStringLiteral("omasnap-save-as"));
   dialog->setScreen(screen());
   dialog->setFont(chromeFont(13));
-  dialog->resize(760, 520);
+  const QSize preferred(1040, 640);
+  dialog->resize(screen() ? preferred.boundedTo(screen()->availableGeometry().size() * 0.9)
+                          : preferred);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   // The overlay is hidden until the chooser has finished closing.
   dialog->setAttribute(Qt::WA_QuitOnClose, false);
@@ -80,6 +85,14 @@ void CaptureEditor::showSaveAsDialog(const QString &suggested) {
   dialog->setFileMode(QFileDialog::AnyFile);
   dialog->setDefaultSuffix(QStringLiteral("png"));
   dialog->setWindowModality(Qt::ApplicationModal);
+  // The detail view's fixed default widths truncate names and dates; give
+  // the name the spare width and fit the other columns to their contents.
+  if (auto *view = dialog->findChild<QTreeView *>(QStringLiteral("treeView"))) {
+    QHeaderView *header = view->header();
+    header->setStretchLastSection(false);
+    header->setSectionResizeMode(QHeaderView::ResizeToContents);
+    header->setSectionResizeMode(0, QHeaderView::Stretch);
+  }
   connect(this, &QObject::destroyed, dialog, &QObject::deleteLater);
   connect(dialog, &QDialog::finished, this, [this, dialog, request](int result) {
     if (request != saveAsRequest_)
