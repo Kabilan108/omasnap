@@ -141,6 +141,8 @@ public:
   [[nodiscard]] QString workingSourcePath() const { return snapshotPath_; }
   [[nodiscard]] QString workingLogPath() const;
   bool restoreOperationLog(const QString &path, QString &error);
+  /** Replaces the opening status, which otherwise names an opened file. */
+  void setOpeningStatus(QString status) { setStatus(std::move(status)); }
   /** Return edits to the originating pin when dismissing this document. */
   void setPinDocument(std::shared_ptr<PinSnapshotFile> document) {
     pinDocument_ = std::move(document);

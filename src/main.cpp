@@ -477,13 +477,26 @@ int main(int argc, char **argv) {
   }
 
   const QSize editingPreview = capture.previewSize;
+  const bool windowedEditing = windowedEditorProcess && editingImage;
+  // Overlay/window handoffs and pin edits arrive as private files; they are
+  // the same capture, not an image the user opened.
+  const bool handedOff = parser.isSet(QStringLiteral("handoff-token"));
+  const bool editingPin = pinDocument != nullptr;
   CaptureEditor editor(std::move(capture), captureMode, quickOutputMode,
                        restoredLog, nullptr, editorWindowMode && !editingImage);
+  if (handedOff)
+    editor.setOpeningStatus(
+        windowedEditing
+            ? QStringLiteral("Editor window · W returns to the overlay")
+            : QStringLiteral("Editor overlay · W moves to a window"));
+  else if (editingPin)
+    editor.setOpeningStatus(
+        QStringLiteral("Editing pinned capture · Esc returns edits to the pin"));
   editor.setPinDocument(std::move(pinDocument));
   editor.setFocusedWindowTarget(std::move(focusedWindowJson));
   startupTimingMark("CaptureEditor constructed");
   editor.setScreen(targetScreen);
-  if (windowedEditorProcess && editingImage) {
+  if (windowedEditing) {
     // An ordinary compositor window: the compositor manages it, and its own
     // float toggle works either way. The overlay chrome carries over
     // unchanged; only the surface role differs.
@@ -491,9 +504,9 @@ int main(int argc, char **argv) {
     editor.setWindowedBackdropOpaque(
         loadEditorWindowBackdropOpaque(defaultConfigPath()));
     editor.setWindowTitle(
-        filePath.isEmpty() ? QStringLiteral("omasnap")
-                           : QStringLiteral("omasnap %1")
-                                 .arg(QFileInfo(filePath).fileName()));
+        filePath.isEmpty() || handedOff || editingPin
+            ? QStringLiteral("omasnap")
+            : QStringLiteral("omasnap %1").arg(QFileInfo(filePath).fileName()));
     // Size to the visible selection, not the pristine canvas: a handed-off
     // capture keeps its whole monitor underneath, but the window should hug
     // what is actually being annotated.

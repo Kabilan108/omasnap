@@ -14,6 +14,7 @@
 #include <QFutureWatcher>
 #include <QObject>
 #include <QPromise>
+#include <QScreen>
 #include <QString>
 #include <QTimer>
 #include <Qt>
@@ -71,7 +72,10 @@ void CaptureEditor::showSaveAsDialog(const QString &suggested) {
   dialog->setObjectName(QStringLiteral("omasnap-save-as"));
   dialog->setScreen(screen());
   dialog->setFont(chromeFont(13));
-  dialog->resize(760, 520);
+  // Wide enough for the detail view's name, size, type, and date columns.
+  const QSize preferred(1040, 640);
+  dialog->resize(screen() ? preferred.boundedTo(screen()->availableGeometry().size() * 0.9)
+                          : preferred);
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   // The overlay is hidden until the chooser has finished closing.
   dialog->setAttribute(Qt::WA_QuitOnClose, false);
