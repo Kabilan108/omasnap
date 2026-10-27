@@ -99,7 +99,16 @@ QString sharedPinPath(const QString &path, const QString &shared,
              ? copySnapshotToScreenshots(path, error) : source.absoluteFilePath();
 }
 
-/// The program name an Exec key in a desktop or D-Bus service file launches.
+/// A program's name, seen through Nix's ".name-wrapped" executables.
+QString programName(const QString &executable) {
+  QString name = QFileInfo(executable).fileName();
+  while (name.startsWith(QLatin1Char('.')) &&
+         name.endsWith(QLatin1StringView("-wrapped")))
+    name = name.mid(1).chopped(8);
+  return name;
+}
+
+/// The program an Exec key in a desktop or D-Bus service file launches.
 QString execProgramName(const QString &path, QLatin1StringView group) {
   QFile file(path);
   if (path.isEmpty() || !file.open(QIODevice::ReadOnly | QIODevice::Text))
@@ -110,10 +119,42 @@ QString execProgramName(const QString &path, QLatin1StringView group) {
     const QString line = QString::fromUtf8(file.readLine()).trimmed();
     if (line.startsWith(QLatin1Char('[')))
       inGroup = line == header;
-    else if (inGroup && line.startsWith(QLatin1StringView("Exec=")))
-      return QFileInfo(QProcess::splitCommand(line.mid(5)).value(0)).fileName();
+    else if (inGroup && line.startsWith(QLatin1StringView("Exec="))) {
+      QStringList command = QProcess::splitCommand(line.mid(5));
+      if (!command.isEmpty() && programName(command.constFirst()) == QLatin1StringView("env")) {
+        command.removeFirst();
+        while (!command.isEmpty() && command.constFirst().contains(QLatin1Char('=')))
+          command.removeFirst();
+      }
+      return programName(command.value(0));
+    }
   }
   return {};
+}
+
+/// Whether the generic FileManager1 name would reach `program`: the bus
+/// routes to whichever process owns it now, or else starts its service file.
+bool genericFileManagerRuns(const QString &program, const QString &service) {
+  if (program.isEmpty() ||
+      program != execProgramName(
+                     QStandardPaths::locate(
+                         QStandardPaths::GenericDataLocation,
+                         QStringLiteral("dbus-1/services/%1.service").arg(service)),
+                     QLatin1StringView("D-BUS Service")))
+    return false;
+  bool owned = false;
+  const QString status = runForOutput(
+      QStringLiteral("busctl"),
+      {QStringLiteral("--user"), QStringLiteral("--timeout=1s"),
+       QStringLiteral("status"), service},
+      &owned, 2000);
+  if (!owned)
+    return true;
+  for (const QString &line : status.split(QLatin1Char('\n'))) {
+    if (line.startsWith(QLatin1StringView("Exe=")))
+      return programName(line.mid(4).trimmed()) == program;
+  }
+  return false;
 }
 
 bool revealFileInFolder(const QString &path, QString &error) {
@@ -140,13 +181,7 @@ bool revealFileInFolder(const QString &path, QString &error) {
         QStandardPaths::locate(QStandardPaths::ApplicationsLocation, desktopId),
         QLatin1StringView("Desktop Entry"));
     const QString genericService = QStringLiteral("org.freedesktop.FileManager1");
-    if (!program.isEmpty() &&
-        program == execProgramName(
-                       QStandardPaths::locate(
-                           QStandardPaths::GenericDataLocation,
-                           QStringLiteral("dbus-1/services/%1.service")
-                               .arg(genericService)),
-                       QLatin1StringView("D-BUS Service")))
+    if (genericFileManagerRuns(program, genericService))
       services << genericService;
     for (const QString &service : std::as_const(services)) {
       bool revealed = false;
@@ -751,9 +786,11 @@ private:
   }
 
   [[nodiscard]] QString dragFilePath() const {
-    if (!sharedPath_.isEmpty())
-      return sharedPath_;
-    return savedPath_.isEmpty() ? path_ : savedPath_;
+    for (const QString &saved : {sharedPath_, savedPath_}) {
+      if (!saved.isEmpty() && QFileInfo::exists(saved))
+        return saved;
+    }
+    return path_;
   }
 
   void updateExpiryPause() {

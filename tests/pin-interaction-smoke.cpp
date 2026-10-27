@@ -109,7 +109,9 @@ bool runPinRevealSmoke(QString &error) {
   if (!write(QStringLiteral("xdg-mime"),
              "#!/bin/sh\n" + cat + " \"${0%/*}/default-app\"\n", true) ||
       !write(QStringLiteral("busctl"),
-             "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"${0%/*}/bus-args\"\n"
+             "#!/bin/sh\nif [ \"$3\" = status ]; then exec " + cat +
+                 " \"${0%/*}/bus-owner\" 2>/dev/null; fi\n"
+             "printf '%s\\n' \"$@\" > \"${0%/*}/bus-args\"\n"
              "test -f \"${0%/*}/bus-ok\"\n", true) ||
       !write(QStringLiteral("xdg-open"),
              "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"${0%/*}/open-args\"\n", true) ||
@@ -346,6 +348,29 @@ bool runPinRevealSmoke(QString &error) {
     error = QStringLiteral("Reveal did not ask the default file manager's FileManager1 service");
     return false;
   }
+  // A running owner of the generic name receives the call, so it must be the
+  // same program too, including behind a Nix wrapper.
+  if (!write(QStringLiteral("bus-owner"),
+             "PID=1\nComm=.plainfm-wrappe\nExe=/opt/plainfm/bin/.plainfm-wrapped\n") ||
+      !QFile::remove(files.filePath(QStringLiteral("bus-args"))) ||
+      !revealFileInFolder(saved, error) ||
+      !read(QStringLiteral("bus-args")).contains("\norg.freedesktop.FileManager1\n") ||
+      QFileInfo::exists(files.filePath(QStringLiteral("open-args")))) {
+    error = QStringLiteral("Reveal did not ask a running, wrapped default file manager");
+    return false;
+  }
+  if (!write(QStringLiteral("bus-owner"), "PID=1\nExe=/usr/bin/nautilus\n") ||
+      !QFile::remove(files.filePath(QStringLiteral("bus-args"))) ||
+      !revealFileInFolder(saved, error) ||
+      !QTest::qWaitFor([&] { return !read(QStringLiteral("open-args")).isEmpty(); }, 2000) ||
+      QFileInfo::exists(files.filePath(QStringLiteral("bus-args")))) {
+    error = QStringLiteral("Reveal asked FileManager1 while another program owned it");
+    return false;
+  }
+  if (!QFile::remove(files.filePath(QStringLiteral("bus-owner"))) ||
+      !QFile::remove(files.filePath(QStringLiteral("open-args"))) ||
+      !write(QStringLiteral("bus-args"), ""))
+    return false;
   if (!write(fileManagerService,
              "[D-BUS Service]\nName=org.freedesktop.FileManager1\n"
              "Exec=/usr/bin/otherfm --service\n") ||
