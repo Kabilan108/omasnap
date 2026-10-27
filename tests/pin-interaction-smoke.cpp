@@ -73,11 +73,15 @@ bool runPinRevealSmoke(QString &error) {
   const QByteArray oldPath = qgetenv("PATH");
   const QByteArray oldRuntime = qgetenv("XDG_RUNTIME_DIR");
   const QByteArray oldScreenshots = qgetenv("OMASNAP_SCREENSHOT_DIR");
+  const QByteArray oldDataHome = qgetenv("XDG_DATA_HOME");
+  const QByteArray oldDataDirs = qgetenv("XDG_DATA_DIRS");
   const auto restore = qScopeGuard([&] {
     QThreadPool::globalInstance()->waitForDone();
     for (const auto &variable : {qMakePair("PATH", oldPath),
                                  qMakePair("XDG_RUNTIME_DIR", oldRuntime),
-                                 qMakePair("OMASNAP_SCREENSHOT_DIR", oldScreenshots)}) {
+                                 qMakePair("OMASNAP_SCREENSHOT_DIR", oldScreenshots),
+                                 qMakePair("XDG_DATA_HOME", oldDataHome),
+                                 qMakePair("XDG_DATA_DIRS", oldDataDirs)}) {
       if (variable.second.isNull())
         qunsetenv(variable.first);
       else
@@ -120,6 +124,9 @@ bool runPinRevealSmoke(QString &error) {
   }
   qputenv("PATH", files.path().toUtf8());
   qputenv("XDG_RUNTIME_DIR", files.path().toUtf8());
+  // Desktop entries and D-Bus service files come only from this test.
+  qputenv("XDG_DATA_HOME", files.filePath(QStringLiteral("data")).toUtf8());
+  qputenv("XDG_DATA_DIRS", files.filePath(QStringLiteral("no-data")).toUtf8());
   const QString screenshots = files.filePath(QStringLiteral("shots # ' ü"));
   qputenv("OMASNAP_SCREENSHOT_DIR", screenshots.toUtf8());
   const auto drain = [] {
@@ -138,6 +145,11 @@ bool runPinRevealSmoke(QString &error) {
   {
     PinWindow pin(pinDisplayImage(image), source, QSize(200, 113), PinLifetime::Timed);
     pin.show();
+    drain();
+    if (pin.dragFilePath() != source) {
+      error = QStringLiteral("An unsaved preview did not drag its own file");
+      return false;
+    }
     const QPoint folder = pinControlRect(pin.size(), 6).center().toPoint();
     QEnterEvent enter(folder, folder, pin.mapToGlobal(folder));
     QApplication::sendEvent(&pin, &enter);
@@ -213,6 +225,11 @@ bool runPinRevealSmoke(QString &error) {
   {
     PinWindow pin(pinDisplayImage(image), savedPreview, QSize(200, 113), PinLifetime::Timed);
     pin.show();
+    drain();
+    if (pin.dragFilePath() != chosen) {
+      error = QStringLiteral("A saved preview dragged its runtime file, not the saved PNG");
+      return false;
+    }
     const QPoint folder = pinControlRect(pin.size(), 6).center().toPoint();
     QEnterEvent enter(folder, folder, pin.mapToGlobal(folder));
     QApplication::sendEvent(&pin, &enter);
@@ -306,6 +323,37 @@ bool runPinRevealSmoke(QString &error) {
       read(QStringLiteral("open-args")) !=
           (QUrl::fromLocalFile(screenshots).toString(QUrl::FullyEncoded) + QLatin1Char('\n')).toUtf8()) {
     error = QStringLiteral("Reveal did not honor a changed default or open its containing folder");
+    return false;
+  }
+  // A file manager without its own bus name is asked through the generic
+  // FileManager1 service, but only when that service runs the same program.
+  const QString fileManagerService =
+      QStringLiteral("data/dbus-1/services/org.freedesktop.FileManager1.service");
+  if (!QDir(files.path()).mkpath(QStringLiteral("data/applications")) ||
+      !QDir(files.path()).mkpath(QStringLiteral("data/dbus-1/services")) ||
+      !write(QStringLiteral("data/applications/plainfm.desktop"),
+             "[Desktop Entry]\nExec=plainfm %U\n\n"
+             "[Desktop Action window]\nExec=otherfm --window\n") ||
+      !write(fileManagerService,
+             "[D-BUS Service]\nName=org.freedesktop.FileManager1\n"
+             "Exec=/opt/plainfm/bin/plainfm --service\n") ||
+      !write(QStringLiteral("default-app"), "plainfm.desktop\n") ||
+      !write(QStringLiteral("bus-ok"), "") ||
+      !QFile::remove(files.filePath(QStringLiteral("open-args"))) ||
+      !revealFileInFolder(saved, error) ||
+      !read(QStringLiteral("bus-args")).contains("\norg.freedesktop.FileManager1\n") ||
+      QFileInfo::exists(files.filePath(QStringLiteral("open-args")))) {
+    error = QStringLiteral("Reveal did not ask the default file manager's FileManager1 service");
+    return false;
+  }
+  if (!write(fileManagerService,
+             "[D-BUS Service]\nName=org.freedesktop.FileManager1\n"
+             "Exec=/usr/bin/otherfm --service\n") ||
+      !QFile::remove(files.filePath(QStringLiteral("bus-args"))) ||
+      !revealFileInFolder(saved, error) ||
+      !QTest::qWaitFor([&] { return !read(QStringLiteral("open-args")).isEmpty(); }, 2000) ||
+      QFileInfo::exists(files.filePath(QStringLiteral("bus-args")))) {
+    error = QStringLiteral("Reveal asked a FileManager1 service run by another program");
     return false;
   }
   if (sharedPinPath(saved, {}, error) != saved ||

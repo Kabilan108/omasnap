@@ -32,6 +32,7 @@
 #include <QPixmap>
 #include <QProcess>
 #include <QScreen>
+#include <QStandardPaths>
 #include <QShowEvent>
 #include <QTimer>
 #include <QUrl>
@@ -98,6 +99,23 @@ QString sharedPinPath(const QString &path, const QString &shared,
              ? copySnapshotToScreenshots(path, error) : source.absoluteFilePath();
 }
 
+/// The program name an Exec key in a desktop or D-Bus service file launches.
+QString execProgramName(const QString &path, QLatin1StringView group) {
+  QFile file(path);
+  if (path.isEmpty() || !file.open(QIODevice::ReadOnly | QIODevice::Text))
+    return {};
+  const QString header = QStringLiteral("[%1]").arg(group);
+  bool inGroup = false;
+  while (!file.atEnd()) {
+    const QString line = QString::fromUtf8(file.readLine()).trimmed();
+    if (line.startsWith(QLatin1Char('[')))
+      inGroup = line == header;
+    else if (inGroup && line.startsWith(QLatin1StringView("Exec=")))
+      return QFileInfo(QProcess::splitCommand(line.mid(5)).value(0)).fileName();
+  }
+  return {};
+}
+
 bool revealFileInFolder(const QString &path, QString &error) {
   const QFileInfo file(path);
   if (!file.isFile()) {
@@ -105,26 +123,45 @@ bool revealFileInFolder(const QString &path, QString &error) {
     return false;
   }
   // The generic FileManager1 service can belong to a different application
-  // than the user's folder default. Ask the configured application itself;
-  // D-Bus-activatable desktop IDs name their service without ".desktop".
-  QString application = runForOutput(
+  // than the user's folder default. Ask the configured application itself:
+  // D-Bus-activatable desktop IDs name their service without ".desktop", and
+  // other file managers are reached through FileManager1 only when that
+  // service launches the same program.
+  const QString desktopId = runForOutput(
       QStringLiteral("xdg-mime"), {QStringLiteral("query"),
                                     QStringLiteral("default"),
                                     QStringLiteral("inode/directory")}).trimmed();
-  if (application.endsWith(QLatin1StringView(".desktop"))) {
-    application.chop(8);
-    bool revealed = false;
-    static_cast<void>(runForOutput(
-        QStringLiteral("busctl"),
-        {QStringLiteral("--user"), QStringLiteral("--timeout=3s"),
-         QStringLiteral("--"), QStringLiteral("call"), application,
-         QStringLiteral("/org/freedesktop/FileManager1"),
-         QStringLiteral("org.freedesktop.FileManager1"), QStringLiteral("ShowItems"),
-         QStringLiteral("ass"), QStringLiteral("1"),
-         QUrl::fromLocalFile(file.absoluteFilePath()).toString(QUrl::FullyEncoded),
-         QString()}, &revealed, 4000));
-    if (revealed)
-      return true;
+  if (desktopId.endsWith(QLatin1StringView(".desktop"))) {
+    QStringList services;
+    const QString application = desktopId.chopped(8);
+    if (application.contains(QLatin1Char('.')))
+      services << application;
+    const QString program = execProgramName(
+        QStandardPaths::locate(QStandardPaths::ApplicationsLocation, desktopId),
+        QLatin1StringView("Desktop Entry"));
+    const QString genericService = QStringLiteral("org.freedesktop.FileManager1");
+    if (!program.isEmpty() &&
+        program == execProgramName(
+                       QStandardPaths::locate(
+                           QStandardPaths::GenericDataLocation,
+                           QStringLiteral("dbus-1/services/%1.service")
+                               .arg(genericService)),
+                       QLatin1StringView("D-BUS Service")))
+      services << genericService;
+    for (const QString &service : std::as_const(services)) {
+      bool revealed = false;
+      static_cast<void>(runForOutput(
+          QStringLiteral("busctl"),
+          {QStringLiteral("--user"), QStringLiteral("--timeout=3s"),
+           QStringLiteral("--"), QStringLiteral("call"), service,
+           QStringLiteral("/org/freedesktop/FileManager1"),
+           QStringLiteral("org.freedesktop.FileManager1"), QStringLiteral("ShowItems"),
+           QStringLiteral("ass"), QStringLiteral("1"),
+           QUrl::fromLocalFile(file.absoluteFilePath()).toString(QUrl::FullyEncoded),
+           QString()}, &revealed, 4000));
+      if (revealed)
+        return true;
+    }
   }
   // File managers without ShowItems still open their containing folder via
   // the user's association.
@@ -135,6 +172,12 @@ bool revealFileInFolder(const QString &path, QString &error) {
   error = QStringLiteral("Could not open the file browser");
   return false;
 }
+
+struct DragPayload {
+  QByteArray png;
+  QImage preview;
+  QString savedPath;
+};
 
 struct PinPreview {
   QImage image;
@@ -187,24 +230,34 @@ public:
         dragPreview_ = preview.drag;
         path_ = pinDocument_->previewPath();
         sharedPath_.clear();
+        savedPath_.clear();
         ++previewRevision_;
         update();
       }
       if (std::exchange(documentReloadPending_, false))
         reloadPinDocument();
     });
-    using DragPayload = QPair<QByteArray, QImage>;
     auto *payload = new QFutureWatcher<DragPayload>(this);
     connect(payload, &QFutureWatcher<DragPayload>::finished, this,
             [this, payload, path = path_] {
       auto result = payload->result();
       if (path_ == path) {
-        dragPng_ = std::move(result.first);
-        dragPreview_ = std::move(result.second);
+        dragPng_ = std::move(result.png);
+        dragPreview_ = std::move(result.preview);
+        savedPath_ = std::move(result.savedPath);
       }
       payload->deleteLater();
     });
     payload->setFuture(QtConcurrent::run([image = image_, path = path_] {
+      // A dropped file keeps the name of the screenshot already saved for
+      // this capture, not the private runtime preview's.
+      QString savedPath;
+      OperationLog log;
+      QString ignored;
+      const QString sidecar = operationLogPath(path);
+      if (QFile::exists(sidecar) && loadOperationLog(sidecar, log, ignored) &&
+          QFileInfo(log.savedPath).isFile())
+        savedPath = log.savedPath;
       // Public --pin files need not be PNGs; offer PNG bytes either way.
       QByteArray png;
       if (QImageReader::imageFormat(path) == "png") {
@@ -216,8 +269,10 @@ public:
         if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG"))
           png.clear();
       }
-      return DragPayload{png, image.scaled(256, 256, Qt::KeepAspectRatio,
-                                           Qt::SmoothTransformation)};
+      return DragPayload{png,
+                         image.scaled(256, 256, Qt::KeepAspectRatio,
+                                      Qt::SmoothTransformation),
+                         savedPath};
     }));
   }
 
@@ -681,7 +736,7 @@ private:
     fileDragActive_ = true;
     updateExpiryPause();
     QMimeData *mime = new QMimeData;
-    const QList<QUrl> urls{QUrl::fromLocalFile(path_)};
+    const QList<QUrl> urls{QUrl::fromLocalFile(dragFilePath())};
     mime->setUrls(urls);
     mime->setText(urls.constFirst().toLocalFile());
     if (!dragPng_.isEmpty())
@@ -693,6 +748,12 @@ private:
     drag.exec(Qt::CopyAction | Qt::MoveAction);
     fileDragActive_ = false;
     updateExpiryPause();
+  }
+
+  [[nodiscard]] QString dragFilePath() const {
+    if (!sharedPath_.isEmpty())
+      return sharedPath_;
+    return savedPath_.isEmpty() ? path_ : savedPath_;
   }
 
   void updateExpiryPause() {
@@ -722,6 +783,9 @@ private:
         layer->setMargins(
             QMargins(0, 0, available.width() - position.x() - width(),
                      available.height() - position.y() - height()));
+        // Margins take effect on the next surface commit. Repaint now, or a
+        // dropped pin waits for some later hover change to move.
+        update();
       }
     }
   }
@@ -763,6 +827,7 @@ private:
   bool actionPending_ = false;
   QString path_;
   QString sharedPath_;
+  QString savedPath_;
   quint64 previewRevision_ = 0;
   PinSnapshotFile snapshotFile_;
   PinSlotLock slotLock_;
