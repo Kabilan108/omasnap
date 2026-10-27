@@ -34,7 +34,7 @@
         in
         pkgs.stdenv.mkDerivation {
           pname = "omasnap";
-          version = "1.21.1";
+          version = "1.21.2";
           src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
