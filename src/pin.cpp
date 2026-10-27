@@ -638,6 +638,9 @@ private:
     layer->setKeyboardInteractivity(
         focused ? LayerShellQt::Window::KeyboardInteractivityExclusive
                 : LayerShellQt::Window::KeyboardInteractivityNone);
+    // Like margins, interactivity changes on the next surface commit. Motion
+    // that changes no hover state would otherwise never hand over the keyboard.
+    update();
   }
 
   void runAction(std::function<ActionResult()> worker, QString message) {
