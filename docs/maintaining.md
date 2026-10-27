@@ -41,7 +41,7 @@ Leave untracked files in the main checkout alone.
 
 ## Cycle
 
-1. **Survey.** `git fetch upstream origin`, then list `<base>..upstream/main`. If it
+1. **Survey.** `git fetch --multiple upstream origin`, then list `<base>..upstream/main`. If it
    holds nothing beyond the standing declines and no proposal is waiting, end the
    turn without notifying anyone. Otherwise,
    group every upstream commit by PR into **Take** (compositor-agnostic, comes over
