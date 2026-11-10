@@ -44,8 +44,8 @@ Compositor-agnostic changes come over unchanged:
 ## Fork fixes in this release
 
 - Pins stack per output (fork #4): slot locks are keyed by output name, so each
-  output's pins start at the top slot. Closing a lower pin still leaves its slot empty
-  until a new pin takes it.
+  output's pins start in its bottom-right slot. Closing a lower pin still leaves its
+  slot empty until a new pin takes it.
 
 ## Skipped, and why
 
