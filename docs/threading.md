@@ -191,10 +191,10 @@ and removed with its source lock. Copy, Save, drag payloads, and editing use
 the full-resolution file; thumbnails are never output or working documents.
 
 Pins are layer-shell surfaces, so placement needs no compositor IPC: a pin
-takes the first free bottom-right slot through a runtime slot lock and moves by
-changing its layer margins when a drag is released. Clipboard actions, saved
-copies for path sharing or revealing in a file browser, default-browser
-discovery and launch, editor launches, drag payload preparation, and reloading
+takes the first free bottom-right slot on its output through a runtime slot
+lock and moves by changing its layer margins when a drag is released.
+Clipboard actions, saved copies for path sharing or revealing in a file
+browser, default-browser discovery and launch, editor launches, drag payload preparation, and reloading
 a returned edit's preview all run on workers. There is no polling timer on idle
 pins and no global shortcut registration.
 

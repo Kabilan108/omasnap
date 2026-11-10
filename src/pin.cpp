@@ -230,9 +230,9 @@ class PinWindow final : public QWidget {
 
 public:
   PinWindow(QImage image, QString path, const QSize &frame,
-            PinLifetime lifetime)
+            PinLifetime lifetime, const QString &output = {})
       : image_(std::move(image)), expiry_(lifetime == PinLifetime::Persistent),
-        path_(std::move(path)), snapshotFile_(path_) {
+        path_(std::move(path)), snapshotFile_(path_), slotLock_(output) {
     setWindowTitle(QStringLiteral("omasnap-pin"));
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground);
@@ -930,8 +930,11 @@ int runPinnedCapture(const QString &path, PinLifetime lifetime,
     return 1;
   }
 
+  // A layer surface stays on the output it maps to and a drag only moves it
+  // within that output, so the slot is taken once, on the target output.
   PinWindow window(std::move(image), path,
-                   pinFrameSize(targetScreen->geometry().size()), lifetime);
+                   pinFrameSize(targetScreen->geometry().size()), lifetime,
+                   targetScreen->name());
   if (!window.hasPinLock()) {
     qWarning("omasnap: could not lock pinned image %s", qUtf8Printable(path));
     return 1;

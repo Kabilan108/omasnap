@@ -12671,6 +12671,10 @@ int main(int argc, char **argv) {
     qWarning().noquote() << snapshotError;
     return 78;
   }
+  if (!runPinSlotSmoke(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 143;
+  }
   if (!runPinExpirySmoke(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 211;

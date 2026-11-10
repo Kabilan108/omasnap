@@ -515,7 +515,9 @@ In the editor, `Ctrl+P` or `P` renders a capture that stays pinned. It writes a
 `pin-<pid>-<n>-<random>.png` under the runtime snapshot directory and launches the same
 `omasnap` executable in detached pin mode. Each pin is a layer-shell surface on the
 capture's output, visible on every workspace. Pins take the first free slot in a column
-growing up from the bottom-right corner, wrapping into further columns.
+growing up from the bottom-right corner, wrapping into further columns. Each output
+stacks its own pins. A pin keeps its slot until it closes, so closing a lower pin leaves
+a gap that the next new pin fills.
 
 Captures use fast lossless PNG encoding. The card loads a separate small display image;
 the clipboard, saved files, and editor retain every original pixel. The card is 200
