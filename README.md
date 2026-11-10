@@ -1,8 +1,9 @@
 # Omasnap
 
 A native Wayland screenshot and annotation overlay for Niri. This is a Niri fork of
-[tobi/omasnap](https://github.com/tobi/omasnap); see
-[docs/upstream-v1.21-integration.md](docs/upstream-v1.21-integration.md) for what it
+[tobi/omasnap](https://github.com/tobi/omasnap); the integration records
+[docs/upstream-v1.25-integration.md](docs/upstream-v1.25-integration.md) and
+[docs/upstream-v1.21-integration.md](docs/upstream-v1.21-integration.md) say what it
 takes from upstream and what it changes. Upstream's [changelog](CHANGELOG.md) covers
 the shared features.
 
