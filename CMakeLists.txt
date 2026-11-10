@@ -72,6 +72,8 @@ add_library(omasnap-core STATIC
   src/overlay-chrome.hpp
   src/shortcut-guide.cpp
   src/shortcut-guide.hpp
+  src/state-marker.cpp
+  src/state-marker.hpp
   src/chrome-theme.cpp
   src/chrome-theme.hpp
   src/eyedropper.cpp

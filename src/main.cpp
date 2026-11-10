@@ -11,6 +11,7 @@
 #include "pin-file.hpp"
 #include "recent-snaps.hpp"
 #include "startup-timing.hpp"
+#include "state-marker.hpp"
 
 #include <LayerShellQt/Window>
 
@@ -189,7 +190,6 @@ int main(int argc, char **argv) {
   // widget is created, so painter/widget default-font text keeps its size and
   // face.
   QApplication::setFont(chromeDefaultFont());
-  initializeChromeTheme();
 
   // A stitched scroll capture (or any tall pinned image) exceeds Qt's default
   // 256 MB image-decode allocation limit; lift it so --file/--pin can open it.
@@ -200,6 +200,9 @@ int main(int argc, char **argv) {
   configureCaptureCommandLine(parser);
   parser.process(application);
   startupTimingMark("command line parsed");
+  // After parsing: --help and --version exit() inside process(), which skips
+  // ~QApplication's wait for the theme loader thread and crashes its teardown.
+  initializeChromeTheme();
 
   QString filePath = parser.value(QStringLiteral("file"));
   const bool clipboardInput = parser.isSet(QStringLiteral("clipboard"));
@@ -307,6 +310,15 @@ int main(int argc, char **argv) {
     qCritical() << "Clipboard input cannot be combined with another target";
     return 2;
   }
+  // --recent reopens a capture's layers from the recent shelf, like the
+  // overlay's recent cards; the image given alongside is the fallback once
+  // the shelf has dropped that capture.
+  std::optional<RecentSnap> reopenedRecent;
+  if (parser.isSet(QStringLiteral("recent"))) {
+    reopenedRecent = findRecentSnap(parser.value(QStringLiteral("recent")));
+    if (reopenedRecent)
+      filePath = reopenedRecent->sourcePath;
+  }
   const bool editingImage = clipboardInput || !filePath.isEmpty();
   if (parser.isSet(QStringLiteral("output")) && !editingImage) {
     qCritical() << "An output may only be specified with an image input";
@@ -390,9 +402,7 @@ int main(int argc, char **argv) {
         return 1;
       }
       inputName = localFile;
-      const QString sidecar = operationLogPath(localFile);
-      if (QFile::exists(sidecar) &&
-          !loadOperationLog(sidecar, restoredLog, error)) {
+      if (!loadSidecarOperationLog(localFile, restoredLog, error)) {
         qCritical().noquote()
             << QStringLiteral("Could not restore operation log: %1").arg(error);
         return 1;
@@ -497,6 +507,8 @@ int main(int argc, char **argv) {
         QStringLiteral("Editing pinned capture · Esc returns edits to the pin"));
   editor.setPinDocument(std::move(pinDocument));
   editor.setFocusedWindowTarget(std::move(focusedWindowJson));
+  if (reopenedRecent)
+    editor.setEditingRecent(std::move(*reopenedRecent));
   startupTimingMark("CaptureEditor constructed");
   editor.setScreen(targetScreen);
   if (windowedEditing) {
@@ -536,6 +548,7 @@ int main(int argc, char **argv) {
     // The closed editor may still be retaining its recent document. A fresh
     // capture must not mistake that background save for an active overlay.
     editor.hide();
+    finishSavingStateMarkers();
     instanceLock.unlock();
     return result;
   }
@@ -573,6 +586,7 @@ int main(int argc, char **argv) {
   // A clean window capture temporarily replaces Niri's clipboard contents.
   // Restore them before a replacement instance can take the lock.
   editor.waitForWindowCapture();
+  finishSavingStateMarkers();
   instanceLock.unlock();
   return result;
 }

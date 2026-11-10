@@ -77,16 +77,13 @@ QString sharedPinPath(const QString &path, const QString &shared,
   if (!shared.isEmpty() && QFileInfo::exists(shared))
     return shared;
   OperationLog metadata;
-  const QString sidecar = operationLogPath(path);
-  if (QFile::exists(sidecar)) {
-    if (!loadOperationLog(sidecar, metadata, error))
-      return {};
-    if (!metadata.savedPath.isEmpty()) {
-      if (QFileInfo(metadata.savedPath).isFile())
-        return metadata.savedPath;
-      error = QStringLiteral("Saved screenshot is no longer available");
-      return {};
-    }
+  if (!loadSidecarOperationLog(path, metadata, error))
+    return {};
+  if (!metadata.savedPath.isEmpty()) {
+    if (QFileInfo(metadata.savedPath).isFile())
+      return metadata.savedPath;
+    error = QStringLiteral("Saved screenshot is no longer available");
+    return {};
   }
   const QFileInfo source(path);
   if (!source.isFile()) {
@@ -289,8 +286,7 @@ public:
       QString savedPath;
       OperationLog log;
       QString ignored;
-      const QString sidecar = operationLogPath(path);
-      if (QFile::exists(sidecar) && loadOperationLog(sidecar, log, ignored) &&
+      if (loadSidecarOperationLog(path, log, ignored) &&
           QFileInfo(log.savedPath).isFile())
         savedPath = log.savedPath;
       // Public --pin files need not be PNGs; offer PNG bytes either way.
@@ -803,7 +799,7 @@ private:
   void toggleKept() {
     expiry_.setKept(!expiry_.kept());
     showToast(expiry_.kept() ? QStringLiteral("Pinned")
-                             : QStringLiteral("Fades after 10 seconds"));
+                             : QStringLiteral("Fades after 7 seconds"));
   }
 
   void showToast(QString message) {

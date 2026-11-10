@@ -51,7 +51,7 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
       "\n"
       "With no target, drag for a region, click for the full focused output, "
       "or press\nSpace for the focused window. Captures save, copy to the clipboard, "
-      "and show a\npreview for 10 seconds; use its pin button or Ctrl+P to keep "
+      "and show a\npreview for 7 seconds; use its pin button or Ctrl+P to keep "
       "it, or Edit to annotate.\n"
       "Use --editor to edit before output.\n"
       "\n"
@@ -87,6 +87,10 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
       QStringLiteral("Save the capture without opening an editor or pin."));
   parser.addOption(copyOption);
   parser.addOption(saveOption);
+  QCommandLineOption recentOption(QStringLiteral("recent"), QString(),
+                                  QStringLiteral("id"));
+  recentOption.setFlags(QCommandLineOption::HiddenFromHelp);
+  parser.addOption(recentOption);
   const QCommandLineOption fileOption(
       QStringLiteral("file"),
       QStringLiteral("Open an existing image file in the annotation editor "

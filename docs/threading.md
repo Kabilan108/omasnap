@@ -203,7 +203,7 @@ on a worker. A filesystem watch on the completed log starts a worker to decode
 the new preview and prepare its drag payload. The GUI updates the image inside
 the existing surface; its position is unchanged.
 
-Normal previews use a one-shot ten-second timer and a short paint-opacity fade.
+Normal previews use a one-shot seven-second timer and a short paint-opacity fade.
 Explicit pin actions and moving a preview disable that timer. Hover, file
 sharing drags, and pending actions pause the remaining time without changing
 pin state. Unpinning restarts its countdown, paused until ongoing interaction

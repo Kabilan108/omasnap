@@ -9,6 +9,58 @@ earlier development is recorded in the [commit history](https://github.com/omaco
 
 ## Unreleased
 
+## 1.25.0
+
+### Added
+
+- `Space` in the select overlay hides the recent captures shelf, and it stays
+  hidden for later captures until `Space` shows it again.
+
+### Fixed
+
+- Open the input method's candidate window under the text caret instead of at
+  the editor's top-left corner, so fcitx5 users see their Chinese, Japanese, or
+  Korean candidates next to the text they are typing.
+- Open an image even when another program's JSON with the same name sits
+  beside it (`report.png` next to `report.json`), for `--file` and for editing
+  or sharing a `--pin`, instead of failing on it as a broken edit history.
+- A lock file left by a crashed capture no longer gets an unrelated omasnap
+  process (such as a pin that reused its process ID) closed by the next
+  capture; a lock nobody holds is reclaimed instead.
+- Preserve native pixels when exporting an unannotated capture without a
+  backdrop. Fractional selection edges no longer smooth-resize the whole
+  image just to remove an outward-rounded boundary pixel.
+- Ignore an `Omasnap logical size` tag or edit-log size that claims a display
+  scale above 4×, so an altered PNG can no longer multiply the export frame
+  (a 400×400 image tagged 40x40 exported at 1680×1680).
+- `--clipboard` stops reading an image format at 256 MiB and tries the next
+  one offered, refusing the image only when none fits, instead of holding
+  however much the clipboard owner sends in memory before deciding.
+
+## 1.24.0
+
+### Changed
+
+- Closing the shortcuts card hides it entirely instead of leaving a Shortcuts pill, and it stays closed for later captures. `?` brings it back.
+- Capture previews and `--notify` notifications fade after 7 seconds of idle time instead of 10.
+
+### Fixed
+
+- Edit on a preview or pin opens the editor on the monitor showing that preview, not the primary one.
+
+## 1.23.0
+
+### Added
+
+- `--notify` announces saved captures in a notification with the capture's
+  thumbnail and size and **Open** and **Edit** buttons, like Omarchy's saved
+  screen recordings, instead of a timed preview, worded in Omarchy's language
+  through `omarchy-i18n`. It covers fresh and scroll
+  captures and saving from the editor or Save As. Omarchy passes it once its
+  `omarchy-notification-send` takes `--action` buttons.
+
+## 1.22.0
+
 ### Added
 
 - Hold `Ctrl` while dragging with Cut (`X`) to insert a transparent band.
@@ -69,6 +121,8 @@ earlier development is recorded in the [commit history](https://github.com/omaco
 - Run OCR's tesseract on one thread. Its OpenMP pool spun on every core and
   made text grabs slower, not faster: a full-screen read drops from about
   1.7 s to 1.0 s with a third of the CPU time, and reads the same text.
+- Open the editor on the preview's current monitor instead of falling back to
+  the primary display when editing a preview or pinned capture.
 - Retain logical display dimensions inside exported PNGs, so captures from
   scaled monitors reopen at the correct size from Omaroll, files, or the
   clipboard without downsampling or slowing the fast PNG encoder.
@@ -220,7 +274,11 @@ earlier development is recorded in the [commit history](https://github.com/omaco
 - Keep the toolbar, capture tabs, hotkey legend, and canvas geometry aligned.
 - Remove the pixels actually covered by a cut-band drag.
 
-[Unreleased changes](https://github.com/omacom/omasnap/compare/v1.21.0...main)
+[Unreleased changes](https://github.com/omacom/omasnap/compare/v1.25.0...main)
+· [1.25.0 changes](https://github.com/omacom/omasnap/compare/v1.24.0...v1.25.0)
+· [1.24.0 changes](https://github.com/omacom/omasnap/compare/v1.23.0...v1.24.0)
+· [1.23.0 changes](https://github.com/omacom/omasnap/compare/v1.22.0...v1.23.0)
+· [1.22.0 changes](https://github.com/omacom/omasnap/compare/v1.21.0...v1.22.0)
 · [1.21.0 changes](https://github.com/omacom/omasnap/compare/v1.20.1...v1.21.0)
 · [1.20.1 changes](https://github.com/omacom/omasnap/compare/v1.20.0...v1.20.1)
 · [1.20.0 changes](https://github.com/omacom/omasnap/compare/v1.19.1...v1.20.0)

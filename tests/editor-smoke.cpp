@@ -16,6 +16,7 @@
 #include "selection-repaint-smoke.hpp"
 #include "overlay-chrome.hpp"
 #include "recent-snaps.hpp"
+#include "state-marker.hpp"
 #include "recent-persistence-smoke.hpp"
 #include "instance-lock-smoke.hpp"
 #include "palette-config-smoke.hpp"
@@ -28,6 +29,7 @@
 #include "stroke-smoothing-smoke.hpp"
 #include "pin-lifecycle-smoke.hpp"
 #include "pin-file.hpp"
+#include "png.hpp"
 #include "text-band.hpp"
 #include "transform-smoke.hpp"
 #include "eyedropper.hpp"
@@ -47,9 +49,11 @@
 #include <QStandardPaths>
 #include <QThread>
 #include <QFile>
+#include <QSaveFile>
 #include <QFileInfo>
 #include <QFontInfo>
 #include <QFontMetricsF>
+#include <QInputMethod>
 #include <QKeyEvent>
 #include <QLockFile>
 #include <QPainter>
@@ -950,19 +954,55 @@ bool runShortcutGuideSmoke(QApplication &application, QString &error) {
     }
     QTest::keyClick(&editor, Qt::Key_Question, Qt::ShiftModifier);
     application.processEvents();
-    if (guide->expanded() || guide->height() > 40) {
-      error = QStringLiteral("Question mark did not collapse the shortcut card");
+    if (guide->expanded() || guide->isVisible()) {
+      error = QStringLiteral("Question mark did not hide the shortcut card");
       return false;
     }
     const QImage collapsed = editor.grab().toImage();
     const QRect toolbar(0, 0, shown.width(), qRound(90 * shown.devicePixelRatio()));
     if (shown.copy(toolbar) != collapsed.copy(toolbar)) {
-      error = QStringLiteral("Collapsing the shortcut card changed the toolbar");
+      error = QStringLiteral("Hiding the shortcut card changed the toolbar");
       return false;
     }
-    QTest::mouseClick(guide, Qt::LeftButton, Qt::NoModifier, guide->rect().center());
-    if (!guide->expanded()) {
-      error = QStringLiteral("Shortcuts button did not reopen the card");
+    const QString hiddenMarker =
+        QDir(QStandardPaths::writableLocation(QStandardPaths::StateLocation))
+            .filePath(QStringLiteral("shortcuts-hidden"));
+    if (!QTest::qWaitFor([&] { return QFile::exists(hiddenMarker); })) {
+      error = QStringLiteral("Closing the shortcut card was not remembered");
+      return false;
+    }
+    {
+      CaptureEditor next(capture, mode);
+      next.setSuppressSnapshots(true);
+      next.resize(1200, 800);
+      next.show();
+      if (!QTest::qWaitForWindowExposed(&next)) {
+        error = QStringLiteral("Second shortcut guide window was not exposed");
+        return false;
+      }
+      auto *nextGuide = next.findChild<ShortcutGuide *>();
+      if (!nextGuide || nextGuide->expanded() || nextGuide->isVisible()) {
+        error = QStringLiteral("A closed shortcut card reopened on the next capture");
+        return false;
+      }
+      next.close();
+    }
+    QTest::keyClick(&editor, Qt::Key_Question, Qt::ShiftModifier);
+    if (!guide->expanded() || !QTest::qWaitFor([&] { return guide->isVisible(); }) ||
+        !QTest::qWaitFor([&] { return !QFile::exists(hiddenMarker); })) {
+      error = QStringLiteral("Question mark did not bring the shortcut card back");
+      return false;
+    }
+    QTest::mouseClick(guide, Qt::LeftButton, Qt::NoModifier,
+                      QPoint(guide->width() / 2, guide->height() - 18));
+    if (guide->expanded() || guide->isVisible()) {
+      error = QStringLiteral("Closing the Shortcuts header did not hide the card");
+      return false;
+    }
+    QTest::keyClick(&editor, Qt::Key_Question, Qt::ShiftModifier);
+    if (!QTest::qWaitFor([&] { return guide->isVisible(); }) ||
+        !QTest::qWaitFor([&] { return !QFile::exists(hiddenMarker); })) {
+      error = QStringLiteral("Question mark did not reopen a card closed from its header");
       return false;
     }
     if (mode == CaptureEditor::CaptureMode::File) {
@@ -3585,6 +3625,55 @@ bool runNativeCaretHiddenCheck(QApplication &application, QString &error) {
   return true;
 }
 
+/** Input methods still get the draft's caret while the native one is hidden. */
+bool runInputMethodCaretCheck(QApplication &application, QString &error) {
+  CaptureData capture;
+  capture.monitor.name = QStringLiteral("TEST");
+  capture.monitor.geometry = {0, 0, 800, 600};
+  capture.monitor.pixelSize = {800, 600};
+  capture.monitor.scale = 1.0;
+  capture.source = QImage(300, 200, QImage::Format_ARGB32_Premultiplied);
+  capture.source.fill(Qt::white);
+  capture.previewSize = capture.source.size();
+
+  CaptureEditor editor(capture, CaptureEditor::CaptureMode::File);
+  editor.resize(800, 600);
+  editor.show();
+  application.processEvents();
+  QTest::keyClick(&editor, Qt::Key_T);
+  QTest::mouseClick(&editor, Qt::LeftButton, Qt::NoModifier,
+                    editor.toScreenPointForTest(QPointF(80, 80)).toPoint());
+  application.processEvents();
+  auto *draft = qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+  if (!draft) {
+    error = QStringLiteral(
+        "Text draft did not open for the input method caret check");
+    return false;
+  }
+  // fcitx5's Qt plugin places its candidate window from this rectangle, and
+  // QInputMethod leaves an invalid (zero-width) one in the draft's own
+  // coordinates.
+  const QRectF caret = QApplication::inputMethod()->cursorRectangle();
+  const QRectF box(QPointF(draft->mapTo(&editor, QPoint(0, 0))),
+                   QSizeF(draft->size()));
+  if (!caret.isValid() || !box.intersects(caret)) {
+    error = QStringLiteral(
+                "Input method caret rectangle %1,%2 %3x%4 is not on the "
+                "draft at %5,%6 %7x%8")
+                .arg(caret.x())
+                .arg(caret.y())
+                .arg(caret.width())
+                .arg(caret.height())
+                .arg(box.x())
+                .arg(box.y())
+                .arg(box.width())
+                .arg(box.height());
+    return false;
+  }
+  editor.close();
+  return true;
+}
+
 /** The draft's cream pill sits exactly where the committed pill lands. */
 bool runDraftPillStaysPutCheck(QApplication &application, QString &error) {
   CaptureData capture;
@@ -4046,6 +4135,120 @@ bool runDraftViewLockCheck(QApplication &application, QString &error) {
     return false;
   }
   editor.close();
+  return true;
+}
+
+/** `--file` and `--pin` read a same-name .json beside the image as its
+ *  operation log. Another program's report.json beside report.png is not
+ *  one: the image must still open (plain), and so must editing its pin.
+ *  omasnap's own log there is still restored, and a broken one still fails. */
+bool runForeignSidecarChecks(QString &error) {
+  const QTemporaryDir files;
+  const QTemporaryDir runtime;
+  if (!files.isValid() || !runtime.isValid()) {
+    error = QStringLiteral("Could not create the sidecar fixture folders");
+    return false;
+  }
+  const QByteArray previousRuntime = qgetenv("XDG_RUNTIME_DIR");
+  qputenv("XDG_RUNTIME_DIR", QFile::encodeName(runtime.path()));
+  const auto restoreRuntime = qScopeGuard([previousRuntime] {
+    if (previousRuntime.isNull())
+      qunsetenv("XDG_RUNTIME_DIR");
+    else
+      qputenv("XDG_RUNTIME_DIR", previousRuntime);
+  });
+  QImage image(400, 300, QImage::Format_RGB32);
+  image.fill(QColor(30, 60, 90));
+  const QDir folder(files.path());
+  const auto writeBytes = [](const QString &path, const QByteArray &bytes) {
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+  };
+  struct Foreign {
+    const char *name;
+    QByteArray json;
+  };
+  for (const Foreign &foreign : {
+           Foreign{"report", "{\"title\":\"quarterly report\",\"rows\":3}\n"},
+           Foreign{"list", "[1, 2, 3]\n"},
+           Foreign{"delta", "{\"ops\":[{\"insert\":\"hello\\n\"}]}\n"}}) {
+    const QString png =
+        folder.filePath(QString::fromLatin1(foreign.name) + QStringLiteral(".png"));
+    if (!image.save(png) || !writeBytes(operationLogPath(png), foreign.json)) {
+      error = QStringLiteral("Could not write the foreign sidecar fixture");
+      return false;
+    }
+    OperationLog log;
+    QString loadError;
+    if (!loadSidecarOperationLog(png, log, loadError) || !log.ops.isEmpty() ||
+        log.previewSize.isValid()) {
+      error = QStringLiteral("An unrelated %1.json stopped %1.png from opening: %2")
+                  .arg(QString::fromLatin1(foreign.name), loadError);
+      return false;
+    }
+    QString pinError;
+    if (!copyPinDocument(png, pinError)) {
+      error = QStringLiteral("An unrelated %1.json stopped editing a pin of "
+                             "%1.png: %2")
+                  .arg(QString::fromLatin1(foreign.name), pinError);
+      return false;
+    }
+  }
+  // omasnap's own log beside an image is still restored...
+  const QString own = folder.filePath(QStringLiteral("own.png"));
+  OperationLog ownLog;
+  ownLog.previewSize = {200, 150};
+  QString saveError;
+  if (!image.save(own) ||
+      !saveOperationLog(operationLogPath(own), ownLog, saveError)) {
+    error = QStringLiteral("Could not write the omasnap sidecar fixture: %1")
+                .arg(saveError);
+    return false;
+  }
+  OperationLog restored;
+  QString loadError;
+  if (!loadSidecarOperationLog(own, restored, loadError) ||
+      restored.previewSize != QSize(200, 150)) {
+    error = QStringLiteral("omasnap's own sidecar log was not restored: %1")
+                .arg(loadError);
+    return false;
+  }
+  // ...and a broken one is still reported rather than silently dropped.
+  const QString broken = folder.filePath(QStringLiteral("broken.png"));
+  if (!image.save(broken) ||
+      !writeBytes(operationLogPath(broken),
+                  "{\"version\":1,\"index\":1,\"ops\":[{\"type\":\"background\","
+                  "\"style\":\"no-such-style\"}]}\n")) {
+    error = QStringLiteral("Could not write the broken sidecar fixture");
+    return false;
+  }
+  OperationLog brokenLog;
+  if (loadSidecarOperationLog(broken, brokenLog, loadError)) {
+    error = QStringLiteral("A broken omasnap sidecar log was silently ignored");
+    return false;
+  }
+  // So is one cut short or emptied, which no longer parses as JSON, and one
+  // from another version of omasnap.
+  for (const Foreign &damaged : {
+           Foreign{"truncated",
+                   "{\"version\":1,\"index\":1,\"ops\":[{\"type\":\"annot"},
+           Foreign{"empty", ""},
+           Foreign{"newer", "{\"version\":2,\"index\":0,\"ops\":[]}\n"}}) {
+    const QString png =
+        folder.filePath(QString::fromLatin1(damaged.name) + QStringLiteral(".png"));
+    if (!image.save(png) || !writeBytes(operationLogPath(png), damaged.json)) {
+      error = QStringLiteral("Could not write the damaged sidecar fixture");
+      return false;
+    }
+    OperationLog damagedLog;
+    QString damagedError;
+    if (loadSidecarOperationLog(png, damagedLog, damagedError) ||
+        damagedError.isEmpty()) {
+      error = QStringLiteral("A %1 omasnap sidecar log was silently ignored")
+                  .arg(QString::fromLatin1(damaged.name));
+      return false;
+    }
+  }
   return true;
 }
 
@@ -5741,6 +5944,10 @@ bool runOpLogSmoke(QApplication &application, QString &error) {
     error = QStringLiteral("Redo did not replay the op log");
     return false;
   }
+  if (!editor.waitForSnapshot()) {
+    error = QStringLiteral("Redone op-log working document did not persist");
+    return false;
+  }
 
   QTemporaryDir directory;
   if (!directory.isValid()) {
@@ -6021,7 +6228,41 @@ bool runRecentsShelfSmoke(QApplication &application, QString &error) {
       error = QStringLiteral("Shelf stayed open after the pointer left");
       return false;
     }
+    // Space hides the shelf, and the next overlay remembers it.
+    const QPoint shelfPoint =
+        again.recentCardRectForTest(0).center().toPoint();
+    QTest::keyClick(&again, Qt::Key_Space);
+    application.processEvents();
+    QTest::mouseMove(&again, shelfPoint, 20);
+    application.processEvents();
+    if (!again.recentsHiddenForTest() || again.recentsOpenForTest() ||
+        !again.recentCardRectForTest(0).isNull()) {
+      error = QStringLiteral("Space did not hide the recents shelf");
+      return false;
+    }
     again.close();
+    finishSavingStateMarkers();
+    {
+      CaptureEditor hidden(capture, CaptureEditor::CaptureMode::Region);
+      hidden.resize(800, 600);
+      hidden.show();
+      application.processEvents();
+      hidden.waitForRecents();
+      if (!hidden.recentsHiddenForTest() ||
+          !hidden.recentCardRectForTest(0).isNull()) {
+        error = QStringLiteral("A hidden recents shelf came back next capture");
+        return false;
+      }
+      QTest::keyClick(&hidden, Qt::Key_Space);
+      application.processEvents();
+      if (hidden.recentsHiddenForTest() ||
+          hidden.recentCardRectForTest(0).isNull()) {
+        error = QStringLiteral("Space did not bring the recents shelf back");
+        return false;
+      }
+      hidden.close();
+      finishSavingStateMarkers();
+    }
   }
   shelved = listRecentSnaps(false);
   if (shelved.size() != 1 || shelved.constFirst().sourcePath == firstSource ||
@@ -11964,9 +12205,78 @@ bool runArrowStyleSmoke(QApplication &application, QString &error) {
 }
 
 
+/** Unedited native exports retain their pixels through PNG output. */
+bool runNativeExportCheck(QString &error) {
+  // An unedited fractional-scale export must be the native pixels the
+  // selection covers, bit for bit, including after a PNG round trip.
+  QImage checker(1920, 1200, QImage::Format_RGB32);
+  for (int y = 0; y < checker.height(); ++y) {
+    auto *line = reinterpret_cast<QRgb *>(checker.scanLine(y));
+    for (int x = 0; x < checker.width(); ++x)
+      line[x] = (x + y) % 2 ? qRgb(255, 255, 255) : qRgb(0, 0, 0);
+  }
+  CaptureData fractional;
+  fractional.monitor.scale = 4.0 / 3.0;
+  fractional.monitor.pixelSize = checker.size();
+  fractional.source = checker;
+  fractional.previewSize = {1440, 900};
+  CaptureData rounded = fractional;
+  rounded.monitor.scale = 1.5;
+  rounded.previewSize = {1707, 100};
+  rounded.source = QImage(2560, 150, QImage::Format_RGB32);
+  rounded.source.fill(Qt::black);
+  rounded.source.setPixelColor(1279, 50, Qt::white);
+  rounded.monitor.pixelSize = rounded.source.size();
+  const struct {
+    const CaptureData *capture;
+    QRectF selection;
+    QRect pixels;
+    QSize logical;
+  } cases[] = {
+      // pixelSelection rounds a fractional origin to the nearest pixel and
+      // keeps the rounded size: 81 logical pixels at 4/3 are 108 native.
+      {&fractional, QRectF(1, 1, 81, 81), QRect(1, 1, 108, 108), {81, 81}},
+      {&fractional, QRectF(3, 6, 300, 150), QRect(4, 8, 400, 200), {300, 150}},
+      {&fractional, QRectF(0, 0, 1440, 900), QRect(0, 0, 1920, 1200),
+       {1440, 900}},
+      {&rounded, QRectF(0, 0, 1707, 100), QRect(0, 0, 2560, 150), {1707, 100}},
+  };
+  for (const auto &item : cases) {
+    for (const BackgroundStyle style :
+         {BackgroundStyle::None, BackgroundStyle::Off}) {
+      const QImage exported =
+          renderCapture(*item.capture, item.selection, {}, style);
+      const QImage expected = item.capture->source.copy(item.pixels)
+                                  .convertToFormat(QImage::Format_ARGB32);
+      QByteArray bytes;
+      QBuffer buffer(&bytes);
+      const bool encoded =
+          buffer.open(QIODevice::WriteOnly) && writePng(exported, buffer);
+      const QImage decoded = QImage::fromData(bytes, "PNG");
+      if (exported.convertToFormat(QImage::Format_ARGB32) != expected ||
+          pngLogicalSize(exported) != item.logical || !encoded ||
+          decoded.convertToFormat(QImage::Format_ARGB32) != expected ||
+          pngLogicalSize(decoded) != item.logical) {
+        error = QStringLiteral("Unedited export changed native pixels or logical size");
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 int main(int argc, char **argv) {
-  if (qEnvironmentVariableIsSet(kPinSmokeEditorChild))
-    return 0;
+  if (qEnvironmentVariableIsSet(kPinSmokeEditorChild)) {
+    QSaveFile arguments(qEnvironmentVariable(kPinSmokeEditorChild));
+    if (!arguments.open(QIODevice::WriteOnly))
+      return 1;
+    for (int i = 1; i < argc; ++i) {
+      const QByteArray argument = QByteArray(argv[i]) + '\0';
+      if (arguments.write(argument) != argument.size())
+        return 1;
+    }
+    return arguments.commit() ? 0 : 1;
+  }
   // Re-executed by the instance-lock checks as the process holding the lock.
   const QString heldLockPath =
       qEnvironmentVariable(kInstanceLockHolderVariable);
@@ -12014,6 +12324,12 @@ int main(int argc, char **argv) {
   // The saved-notification helper re-executes the current binary. In this
   // test executable that would recursively launch the entire smoke suite.
   qputenv("OMASNAP_DISABLE_NOTIFICATIONS", QByteArrayLiteral("1"));
+  // Remembered UI state, such as a closed shortcuts card, stays out of the
+  // developer's own.
+  QTemporaryDir smokeState;
+  if (!smokeState.isValid())
+    return 18;
+  qputenv("XDG_STATE_HOME", smokeState.path().toUtf8());
 
   // Live output capture against a real compositor (the smoke's own Wayland
   // connection; Qt's platform does not matter): open a session on the named
@@ -12052,6 +12368,10 @@ int main(int argc, char **argv) {
     return 0;
   }
   QString snapshotError;
+  if (!runNativeExportCheck(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 232;
+  }
   if (parser.isSet(outputChecksOption)) {
     if (!runQuickOutputChecks(snapshotError) ||
         !runPostCaptureChecks(snapshotError, false) ||
@@ -12329,6 +12649,10 @@ int main(int argc, char **argv) {
     qCritical().noquote() << snapshotError;
     return 65;
   }
+  if (!runForeignSidecarChecks(snapshotError)) {
+    qCritical().noquote() << snapshotError;
+    return 237;
+  }
   if (!runEditorHandoffRoundTrip(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 6;
@@ -12340,6 +12664,10 @@ int main(int argc, char **argv) {
   if (!runNativeCaretHiddenCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
     return 121;
+  }
+  if (!runInputMethodCaretCheck(application, snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 236;
   }
   if (!runDraftViewLockCheck(application, snapshotError)) {
     qWarning().noquote() << snapshotError;
@@ -13607,11 +13935,19 @@ int main(int argc, char **argv) {
     qWarning().noquote() << pngError;
     return EXIT_FAILURE;
   }
+  if (!runPngLogicalSizeBoundsSmoke(pngError)) {
+    qWarning().noquote() << pngError;
+    return 235;
+  }
 
   QString clipboardError;
   if (!runClipboardSmoke(clipboardError)) {
     qWarning().noquote() << clipboardError;
     return 88;
+  }
+  if (!runClipboardSizeLimitSmoke(clipboardError)) {
+    qWarning().noquote() << clipboardError;
+    return 234;
   }
 
   QString transformError;
@@ -13636,6 +13972,10 @@ int main(int argc, char **argv) {
   if (!runInstanceLockSmoke(instanceError)) {
     qWarning().noquote() << instanceError;
     return 85;
+  }
+  if (!runInstanceLockReusedPidSmoke(instanceError)) {
+    qWarning().noquote() << instanceError;
+    return 233;
   }
   return 0;
 }
