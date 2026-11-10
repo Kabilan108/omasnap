@@ -21,7 +21,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QTimer>
 #include <QApplication>
 
@@ -45,48 +44,6 @@
 #include <unistd.h>
 
 namespace {
-int runSavedNotification(const QString &inputPath) {
-  const QString imagePath = resolveLocalImagePath(inputPath);
-  if (imagePath.isEmpty()) {
-    qWarning().noquote()
-        << QStringLiteral("Saved screenshot no longer exists: %1").arg(inputPath);
-    return 1;
-  }
-  if (qEnvironmentVariableIsSet("OMASNAP_DISABLE_NOTIFICATIONS"))
-    return 0;
-
-  QProcess notification;
-  notification.setProcessChannelMode(QProcess::SeparateChannels);
-  notification.start(QStringLiteral("notify-send"),
-                     {QStringLiteral("--app-name"), QStringLiteral("omasnap"),
-                      QStringLiteral("--expire-time"), QStringLiteral("10000"),
-                      QStringLiteral("--icon"), imagePath,
-                      QStringLiteral("--action=edit=Edit screenshot"),
-                      QStringLiteral("--wait"), QStringLiteral("Omasnap"),
-                      QStringLiteral("Screenshot saved")});
-  if (!notification.waitForStarted(2000)) {
-    qWarning().noquote()
-        << QStringLiteral("Could not start saved screenshot notification: %1")
-               .arg(notification.errorString());
-    return 1;
-  }
-  if (!notification.waitForFinished(-1))
-    return 1;
-  if (notification.exitStatus() != QProcess::NormalExit ||
-      notification.exitCode() != 0)
-    return 0;
-
-  if (QString::fromUtf8(notification.readAllStandardOutput()).trimmed() ==
-      QStringLiteral("edit")) {
-    if (!QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                                 {QStringLiteral("--file"), imagePath})) {
-      qWarning() << "Could not reopen saved screenshot";
-      return 1;
-    }
-  }
-  return 0;
-}
-
 class PosixSignalNotifier final : public QObject {
 public:
   explicit PosixSignalNotifier(QObject *parent = nullptr) : QObject(parent) {
@@ -200,6 +157,9 @@ int main(int argc, char **argv) {
   configureCaptureCommandLine(parser);
   parser.process(application);
   startupTimingMark("command line parsed");
+  // The environment carries --notify to the pins and editors this starts.
+  if (parser.isSet(QStringLiteral("notify")))
+    qputenv("OMASNAP_NOTIFY", "1");
   // After parsing: --help and --version exit() inside process(), which skips
   // ~QApplication's wait for the theme loader thread and crashes its teardown.
   initializeChromeTheme();
@@ -250,7 +210,13 @@ int main(int argc, char **argv) {
       qCritical() << "Saved notification mode cannot be combined with other targets";
       return 2;
     }
-    return runSavedNotification(parser.value(QStringLiteral("saved-notification")));
+    if (qEnvironmentVariableIsSet("OMASNAP_DISABLE_NOTIFICATIONS"))
+      return 0;
+    const QString headline = parser.value(QStringLiteral("headline"));
+    return runSavedNotification(
+        parser.value(QStringLiteral("saved-notification")),
+        headline.isEmpty() ? QStringLiteral("Screenshot saved") : headline,
+        parser.value(QStringLiteral("recent")));
   }
   if (parser.isSet(QStringLiteral("pin")) || parser.isSet(QStringLiteral("preview"))) {
     if (!filePath.isEmpty() || clipboardInput || requestedModes > 0 ||
@@ -315,7 +281,17 @@ int main(int argc, char **argv) {
   // the shelf has dropped that capture.
   std::optional<RecentSnap> reopenedRecent;
   if (parser.isSet(QStringLiteral("recent"))) {
-    reopenedRecent = findRecentSnap(parser.value(QStringLiteral("recent")));
+    if (clipboardInput || requestedModes > 0) {
+      qCritical() << "A recent capture cannot be combined with another target";
+      return 2;
+    }
+    QString recentError;
+    if (!resolveRecentTarget(parser.value(QStringLiteral("recent")), filePath,
+                             reopenedRecent, recentError)) {
+      qCritical().noquote() << recentError;
+      sendCaptureNotification(recentError);
+      return 1;
+    }
     if (reopenedRecent)
       filePath = reopenedRecent->sourcePath;
   }

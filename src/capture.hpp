@@ -457,9 +457,34 @@ bool removeEditorHandoff(const QString &path, const QString &token);
 [[nodiscard]] bool saveTemporarySnapshot(const QImage &image, QString path,
                                          QString &error);
 [[nodiscard]] QString recognizeText(const QImage &image, QString &error);
+/** Whether saved captures are announced in a notification with Open and
+ *  Edit actions instead of a timed preview. Set by --notify, which main()
+ *  carries through OMASNAP_NOTIFY to the pins and editors a capture starts. */
+[[nodiscard]] bool notifySavedCaptures();
 /** Builds the notify-send argv for a notification without an image. */
 [[nodiscard]] QStringList captureNotificationArguments(const QString &message);
-/** Notifies without an image directly. With an image, a detached
- *  `omasnap --saved-notification` helper waits for the Edit action. */
-void sendCaptureNotification(const QString &message,
-                             const QString &imagePath = {});
+/** Builds the notify-send argv for a saved capture. With actions (--notify),
+ *  the headline is the summary, details (the image's size) the body, and
+ *  Open comes before Edit; otherwise it has a single Edit action. */
+[[nodiscard]] QStringList savedNotificationArguments(const QString &headline,
+                                                     const QString &imagePath,
+                                                     bool actions,
+                                                     const QString &details = {});
+/** The command, program first, that a saved notification's action runs.
+ *  Edit reopens recentId's layers when given, with the image as fallback once
+ *  the shelf has dropped that capture. Empty for an unknown action. */
+[[nodiscard]] QStringList savedNotificationCommand(const QString &action,
+                                                   const QString &imagePath,
+                                                   const QString &recentId);
+/** The detached `omasnap --saved-notification` helper: shows the saved
+ *  capture's notification, waits for it to close, and starts the chosen
+ *  action through launcher when one is given. */
+int runSavedNotification(
+    const QString &inputPath, const QString &headline, const QString &recentId,
+    const std::function<bool(const QString &, const QStringList &)> &launcher = {});
+/** Notifies without an image directly. With an image, starts the detached
+ *  saved-notification helper, through launcher when one is given. */
+void sendCaptureNotification(
+    const QString &message, const QString &imagePath = {},
+    const QString &recentId = {},
+    const std::function<bool(const QString &, const QStringList &)> &launcher = {});

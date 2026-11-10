@@ -133,6 +133,21 @@ std::optional<RecentSnap> findRecentSnap(const QString &recentId, QString *error
   return std::nullopt;
 }
 
+bool resolveRecentTarget(const QString &recentId, const QString &filePath,
+                         std::optional<RecentSnap> &recent, QString &error) {
+  recent = findRecentSnap(recentId, &error);
+  if (recent)
+    return true;
+  // A capture still being written must not open as flattened pixels.
+  if (!error.isEmpty())
+    return false;
+  if (filePath.isEmpty()) {
+    error = QStringLiteral("That capture is no longer in the recent captures");
+    return false;
+  }
+  return true;
+}
+
 RecentSnapWriter::RecentSnapWriter(QString recentId)
     : recentId_(recentId.isEmpty() ? QUuid::createUuid().toString(QUuid::Id128)
                                    : std::move(recentId)),

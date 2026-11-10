@@ -668,6 +668,7 @@ private:
   void replayLog();
   void redoEdit();
   friend bool runSaveAsSmoke(QString &error);
+  friend bool runNotifyEditorSmoke(const QString &workPath, QString &error);
   void cancelSaveAs();
   void restoreSaveAsFocus();
   void saveAs();

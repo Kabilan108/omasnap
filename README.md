@@ -107,7 +107,8 @@ Runtime commands used by the application:
 - `tesseract`
 - `xdg-open`, plus `xdg-mime` and `busctl` when available, for Show in folder
 - `notify-send`; saved captures include an Edit action that reopens them in
-  Omasnap. Notification failure does not invalidate output.
+  Omasnap, and Open as well under `--notify`. Notification failure does not
+  invalidate output.
 
 ## Install with Nix
 
@@ -253,6 +254,15 @@ only, `--save` to save only, or both flags to copy and save. Region and window c
 fullscreen captures output immediately. Quick output cannot be combined with `--file`,
 `--clipboard`, or `--pin`.
 
+Add `--notify` to announce every saved capture (fresh autosaved shots, scroll captures,
+and saves from the editor or Save As) in a notification instead of a preview. It shows
+the capture's image, whether it was copied too, and its size, with **Open** to view the
+saved PNG in the default viewer and **Edit** to reopen the capture with its layers and
+undo history. The notification is sent through `notify-send` with actions, so the
+notification daemon must support actions; mako, dunst, swaync and fnott do. Pins and
+editors opened from that capture keep the option. Copy-only captures still show their
+preview, since there is no file to open.
+
 ### One instance, toggled by the same hotkey
 
 Only one capture overlay runs at a time, guarded by a lock file in the runtime snapshot
@@ -311,8 +321,9 @@ passes 256 MiB, and the next offered format is tried; the image is refused if no
 
 The editor opens on the focused Niri output.
 
-File URLs are accepted too. A saved capture notification's Edit action launches
-`omasnap` on the finished screenshot, so it can be reopened and re-annotated.
+File URLs are accepted too. A saved capture notification's Edit action reopens the
+capture from the recent shelf with its layers and undo history, or opens the saved
+screenshot itself once the shelf has dropped that capture.
 
 ### Recent captures
 

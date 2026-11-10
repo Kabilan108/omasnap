@@ -2,6 +2,7 @@
 #include <QTextLayout>
 #include <QTextOption>
 #include "capture.hpp"
+#include "cli-path.hpp"
 #include "pin-file.hpp"
 #include "pin-layout.hpp"
 #include "png.hpp"
@@ -19,11 +20,13 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QImageReader>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QLinearGradient>
+#include <QLocale>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPointF>
@@ -2093,11 +2096,10 @@ bool quickOutput(QImage image, QuickOutputMode mode, QString &error,
     const QString saved = moveSnapshotToScreenshots(path, error);
     if (saved.isEmpty())
       return false;
-    if (mode == QuickOutputMode::Save)
-      sendCaptureNotification(QStringLiteral("Screenshot saved"), saved);
-    else
-      sendCaptureNotification(QStringLiteral("Screenshot saved and copied"),
-                              saved);
+    sendCaptureNotification(mode == QuickOutputMode::Save
+                                ? QStringLiteral("Screenshot saved")
+                                : QStringLiteral("Screenshot saved and copied"),
+                            saved, log.recentId);
   } else {
     QFile::remove(path);
     sendCaptureNotification(QStringLiteral("Screenshot copied to clipboard"));
@@ -3045,18 +3047,121 @@ QStringList captureNotificationArguments(const QString &message) {
           QStringLiteral("Omasnap"),       message};
 }
 
-void sendCaptureNotification(const QString &message, const QString &imagePath) {
-  if (qEnvironmentVariableIsSet("OMASNAP_DISABLE_NOTIFICATIONS"))
+bool notifySavedCaptures() {
+  return qEnvironmentVariableIntValue("OMASNAP_NOTIFY") == 1;
+}
+
+QStringList savedNotificationArguments(const QString &headline,
+                                       const QString &imagePath, bool actions,
+                                       const QString &details) {
+  QStringList arguments{QStringLiteral("--app-name"), QStringLiteral("omasnap"),
+                        QStringLiteral("--expire-time"), QStringLiteral("7000"),
+                        QStringLiteral("--icon"), imagePath};
+  if (!actions) {
+    arguments << QStringLiteral("--action=edit=Edit screenshot")
+              << QStringLiteral("--wait") << QStringLiteral("Omasnap") << headline;
+    return arguments;
+  }
+  arguments << QStringLiteral("--action=open=Open")
+            << QStringLiteral("--action=edit=Edit") << QStringLiteral("--wait")
+            << headline;
+  if (!details.isEmpty())
+    arguments << details;
+  return arguments;
+}
+
+QStringList savedNotificationCommand(const QString &action,
+                                     const QString &imagePath,
+                                     const QString &recentId) {
+  if (action == QStringLiteral("open"))
+    return {QStringLiteral("xdg-open"), imagePath};
+  if (action != QStringLiteral("edit"))
+    return {};
+  QStringList command{QCoreApplication::applicationFilePath()};
+  if (!recentId.isEmpty())
+    command << QStringLiteral("--recent") << recentId;
+  command << QStringLiteral("--file") << imagePath;
+  return command;
+}
+
+int runSavedNotification(
+    const QString &inputPath, const QString &headline, const QString &recentId,
+    const std::function<bool(const QString &, const QStringList &)> &launcher) {
+  const QString imagePath = resolveLocalImagePath(inputPath);
+  if (imagePath.isEmpty()) {
+    qWarning().noquote()
+        << QStringLiteral("Saved screenshot no longer exists: %1").arg(inputPath);
+    return 1;
+  }
+  const bool actions = notifySavedCaptures();
+  QString details;
+  if (actions) {
+    const QSize size = QImageReader(imagePath).size();
+    if (size.isValid()) {
+      const QLocale locale;
+      details = QStringLiteral("%1 × %2 · %3")
+                    .arg(locale.toString(size.width()),
+                         locale.toString(size.height()),
+                         locale.formattedDataSize(QFileInfo(imagePath).size(), 1,
+                                                  QLocale::DataSizeSIFormat));
+    }
+  }
+
+  QProcess notification;
+  notification.setProcessChannelMode(QProcess::SeparateChannels);
+  notification.start(QStringLiteral("notify-send"),
+                     savedNotificationArguments(headline, imagePath, actions, details));
+  if (!notification.waitForStarted(2000)) {
+    qWarning().noquote()
+        << QStringLiteral("Could not start saved screenshot notification: %1")
+               .arg(notification.errorString());
+    return 1;
+  }
+  if (!notification.waitForFinished(-1))
+    return 1;
+  if (notification.exitStatus() != QProcess::NormalExit ||
+      notification.exitCode() != 0)
+    return 0;
+
+  const QStringList command = savedNotificationCommand(
+      QString::fromUtf8(notification.readAllStandardOutput()).trimmed(),
+      imagePath, recentId);
+  if (command.isEmpty())
+    return 0;
+  const QString program = command.first();
+  const QStringList arguments = command.mid(1);
+  if (!(launcher ? launcher(program, arguments)
+                 : QProcess::startDetached(program, arguments))) {
+    qWarning().noquote() << QStringLiteral("Could not start %1").arg(program);
+    return 1;
+  }
+  return 0;
+}
+
+void sendCaptureNotification(
+    const QString &message, const QString &imagePath, const QString &recentId,
+    const std::function<bool(const QString &, const QStringList &)> &launcher) {
+  if (imagePath.isEmpty()) {
+    if (!qEnvironmentVariableIsSet("OMASNAP_DISABLE_NOTIFICATIONS"))
+      QProcess::startDetached(QStringLiteral("notify-send"),
+                              captureNotificationArguments(message));
     return;
-  if (!imagePath.isEmpty()) {
-    if (!QProcess::startDetached(
-            QCoreApplication::applicationFilePath(),
-            {QStringLiteral("--saved-notification"), imagePath}))
+  }
+  // The helper waits for the chosen action, so it outlives this process.
+  QStringList arguments{QStringLiteral("--saved-notification"), imagePath,
+                        QStringLiteral("--headline"), message};
+  if (!recentId.isEmpty())
+    arguments << QStringLiteral("--recent") << recentId;
+  const QString program = QCoreApplication::applicationFilePath();
+  if (launcher) {
+    if (!launcher(program, arguments))
       qWarning() << "Could not start saved screenshot notification helper";
     return;
   }
-  QProcess::startDetached(QStringLiteral("notify-send"),
-                          captureNotificationArguments(message));
+  if (qEnvironmentVariableIsSet("OMASNAP_DISABLE_NOTIFICATIONS"))
+    return;
+  if (!QProcess::startDetached(program, arguments))
+    qWarning() << "Could not start saved screenshot notification helper";
 }
 
 void describeFileCapture(CaptureData &capture, QImage image,

@@ -25,6 +25,7 @@
 #include "stitch-smoke.hpp"
 #include "scroll-startup-smoke.hpp"
 #include "save-as-smoke.hpp"
+#include "notify-smoke.hpp"
 #include "stitch.hpp"
 #include "stroke-smoothing-smoke.hpp"
 #include "pin-lifecycle-smoke.hpp"
@@ -12662,6 +12663,10 @@ int main(int argc, char **argv) {
   if (!runSaveAsSmoke(snapshotError)) {
     qWarning().noquote() << snapshotError;
     return EXIT_FAILURE;
+  }
+  if (!runNotifySmoke(snapshotError)) {
+    qWarning().noquote() << snapshotError;
+    return 238;
   }
   if (!runPinLayoutSmoke(snapshotError)) {
     qWarning().noquote() << snapshotError;

@@ -48,7 +48,7 @@ puts these on the wrapper's `PATH`, except `niri` itself.
 | `xdg-open` | Opening a screenshot's containing folder in the default file browser | For Show in folder |
 | `xdg-mime` / `busctl` | Resolve the default folder application and ask it to select the screenshot with `FileManager1.ShowItems` | Optional — falls back to `xdg-open` |
 | `tesseract` | OCR text recognition | Only if OCR is used; missing tesseract fails just that action |
-| `notify-send` | Capture-finished notifications, with an Edit action for saved captures | No — failure does not affect the output |
+| `notify-send` | Capture-finished notifications, with an Edit action for saved captures (Open and Edit under `--notify`) | No — failure does not affect the output |
 
 These run through the small `QProcess` helpers in `src/capture.cpp` and
 `src/pin.cpp`, from a background worker (see [threading.md](threading.md)).

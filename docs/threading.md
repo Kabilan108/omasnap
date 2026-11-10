@@ -85,6 +85,12 @@ the instance lock is released, before application teardown. The worker reports
 the completed save before retaining the editable capture in recents. Save As
 is unavailable during active drawing/panning gestures or initial backdrop loading.
 
+Saved-capture notifications start from the same output workers, never the GUI thread.
+A detached `omasnap --saved-notification` helper process reads the image's size for
+`--notify`, waits for the notification's action, and starts `xdg-open` or the editor,
+so nothing in the capture process waits on the notification daemon. Under `--notify`
+the notification replaces the timed preview for every saved capture.
+
 ## Pointer motion on large monitors
 
 Input and `QWidget` painting necessarily share Qt's GUI thread, but pointer

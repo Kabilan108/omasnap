@@ -70,5 +70,14 @@ private:
 [[nodiscard]] std::optional<RecentSnap> findRecentSnap(const QString &recentId,
                                                       QString *error = nullptr);
 
+/// Resolves `--recent <id>` against `--file <path>`. Returns the capture to
+/// reopen with its layers, or nullopt to open filePath, the fallback once the
+/// shelf has dropped that capture. Fails when the capture is still being saved
+/// or there is nothing to fall back to. Waits like findRecentSnap.
+[[nodiscard]] bool resolveRecentTarget(const QString &recentId,
+                                       const QString &filePath,
+                                       std::optional<RecentSnap> &recent,
+                                       QString &error);
+
 /// Deletes one entry's files.
 void removeRecentSnap(const RecentSnap &snap);

@@ -4229,26 +4229,30 @@ void CaptureEditor::finish(OutputMode mode) {
         result.error = error;
         return;
       }
-      // A fresh or edited capture's timed preview is its completion UI;
-      // other saves are announced from here, off the UI thread.
-      if (savedPreview || autosave) {
-        const QString preview = launchPinnedCapture(
+      // A fresh or edited capture's timed preview is its completion UI,
+      // unless --notify makes a notification the completion UI for every
+      // saved capture. Either is started here, off the UI thread.
+      const QString headline = mode == OutputMode::Save
+                                   ? QStringLiteral("Screenshot saved")
+                                   : QStringLiteral("Screenshot saved and copied");
+      const bool preview = (savedPreview || autosave) && !notifySavedCaptures();
+      if (preview) {
+        const QString pin = launchPinnedCapture(
             image, renderedCaptureLogicalSize(captureCopy, image.size()), false,
             PinLifetime::Timed, result.error, launcher, log.recentId, result.saved,
             outputName);
-        if (preview.isEmpty()) {
+        if (pin.isEmpty()) {
           result.error = QStringLiteral("Saved to %1, but could not show its preview: %2")
                              .arg(result.saved, result.error);
           return;
         }
+      } else {
+        sendCaptureNotification(headline, result.saved, log.recentId, launcher);
+      }
+      if (savedPreview || autosave) {
         result.savedPreview = true;
         if (document)
           document->finishSavedPreview(log, result.saved);
-      } else {
-        sendCaptureNotification(mode == OutputMode::Save
-                                    ? QStringLiteral("Screenshot saved")
-                                    : QStringLiteral("Screenshot saved and copied"),
-                                result.saved);
       }
     } else {
       QFile::remove(exportPath);
@@ -4271,8 +4275,8 @@ void CaptureEditor::completeFinish(const FinishResult &result) {
   }
   snapshotPath_.clear();
   if (result.savedPreview) {
-    // The saved preview is the completion UI, and the originating preview
-    // already records the saved path.
+    // The worker's saved preview or notification is the completion UI, and
+    // the originating preview already records the saved path.
     close();
     return;
   }

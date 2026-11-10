@@ -87,6 +87,12 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
       QStringLiteral("Save the capture without opening an editor or pin."));
   parser.addOption(copyOption);
   parser.addOption(saveOption);
+  const QCommandLineOption notifyOption(
+      QStringLiteral("notify"),
+      QStringLiteral("Announce saved captures in a notification with Open and "
+                     "Edit actions instead of a preview. The notification "
+                     "daemon must support actions."));
+  parser.addOption(notifyOption);
   QCommandLineOption recentOption(QStringLiteral("recent"), QString(),
                                   QStringLiteral("id"));
   recentOption.setFlags(QCommandLineOption::HiddenFromHelp);
@@ -135,6 +141,10 @@ void configureCaptureCommandLine(QCommandLineParser &parser, bool beforeQt) {
                                        QString(), QStringLiteral("path"));
   savedNotification.setFlags(QCommandLineOption::HiddenFromHelp);
   parser.addOption(savedNotification);
+  QCommandLineOption headline(QStringLiteral("headline"), QString(),
+                              QStringLiteral("text"));
+  headline.setFlags(QCommandLineOption::HiddenFromHelp);
+  parser.addOption(headline);
   const QCommandLineOption scrollOption(
       QStringLiteral("scroll"),
       QStringLiteral("Capture a scrolling region and stitch it into one tall "
