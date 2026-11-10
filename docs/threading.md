@@ -85,6 +85,12 @@ the instance lock is released, before application teardown. The worker reports
 the completed save before retaining the editable capture in recents. Save As
 is unavailable during active drawing/panning gestures or initial backdrop loading.
 
+Saved-capture notifications start from the same output workers, never the GUI thread.
+A detached `omasnap --saved-notification` helper process reads the image's size for
+`--notify`, waits for the notification's action, and starts `xdg-open` or the editor,
+so nothing in the capture process waits on the notification daemon. Under `--notify`
+the notification replaces the timed preview for every saved capture.
+
 ## Pointer motion on large monitors
 
 Input and `QWidget` painting necessarily share Qt's GUI thread, but pointer
@@ -191,10 +197,10 @@ and removed with its source lock. Copy, Save, drag payloads, and editing use
 the full-resolution file; thumbnails are never output or working documents.
 
 Pins are layer-shell surfaces, so placement needs no compositor IPC: a pin
-takes the first free bottom-right slot through a runtime slot lock and moves by
-changing its layer margins when a drag is released. Clipboard actions, saved
-copies for path sharing or revealing in a file browser, default-browser
-discovery and launch, editor launches, drag payload preparation, and reloading
+takes the first free bottom-right slot on its output through a runtime slot
+lock and moves by changing its layer margins when a drag is released.
+Clipboard actions, saved copies for path sharing or revealing in a file
+browser, default-browser discovery and launch, editor launches, drag payload preparation, and reloading
 a returned edit's preview all run on workers. There is no polling timer on idle
 pins and no global shortcut registration.
 
@@ -203,7 +209,7 @@ on a worker. A filesystem watch on the completed log starts a worker to decode
 the new preview and prepare its drag payload. The GUI updates the image inside
 the existing surface; its position is unchanged.
 
-Normal previews use a one-shot ten-second timer and a short paint-opacity fade.
+Normal previews use a one-shot seven-second timer and a short paint-opacity fade.
 Explicit pin actions and moving a preview disable that timer. Hover, file
 sharing drags, and pending actions pause the remaining time without changing
 pin state. Unpinning restarts its countdown, paused until ongoing interaction

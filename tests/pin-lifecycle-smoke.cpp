@@ -64,11 +64,11 @@ bool runPinExpirySmoke(QString &error) {
   paused.setPaused(true);
   unpinnedElapsed.start();
   unpinned.setKept(false);
-  while ((timedClosed.isEmpty() || unpinnedClosed.isEmpty()) && elapsed.elapsed() < 13000)
+  while ((timedClosed.isEmpty() || unpinnedClosed.isEmpty()) && elapsed.elapsed() < 10000)
     QTest::qWait(20);
   if (timedClosed.size() != 1 || unpinnedClosed.size() != 1 || !faded ||
-      closedAt < 10000 || unpinnedAt < 10000) {
-    error = QStringLiteral("A preview did not fade after ten seconds, or unpinning did not restart its lifetime");
+      closedAt < 7000 || unpinnedAt < 7000) {
+    error = QStringLiteral("A preview did not fade after seven seconds, or unpinning did not restart its lifetime");
     return false;
   }
   if (!keptClosed.isEmpty() || !pinnedClosed.isEmpty() || !pausedClosed.isEmpty() ||
@@ -80,6 +80,48 @@ bool runPinExpirySmoke(QString &error) {
   hoveredDuringFade.setPaused(false);
   if (!fadedHoveredClosed.wait(1000) || fadedHoveredClosed.size() != 1) {
     error = QStringLiteral("Leaving a fading preview did not resume its expiry");
+    return false;
+  }
+  return true;
+}
+
+bool runPinSlotSmoke(QString &error) {
+  // Names unlike real outputs keep these locks clear of any live pins.
+  const QString external = QStringLiteral("SMOKE-DP-1");
+  const QString laptop = QStringLiteral("SMOKE-eDP-1");
+  {
+    const PinSlotLock externalFirst(external);
+    const PinSlotLock laptopFirst(laptop);
+    const PinSlotLock externalSecond(external);
+    if (!externalFirst.isLocked() || !laptopFirst.isLocked() ||
+        !externalSecond.isLocked()) {
+      error = QStringLiteral("Pin slot locks were not acquired");
+      return false;
+    }
+    if (externalFirst.index() != 0 || laptopFirst.index() != 0 ||
+        externalSecond.index() != 1) {
+      error = QStringLiteral(
+                  "Pins on different outputs shared a slot column: got %1, %2, %3")
+                  .arg(externalFirst.index())
+                  .arg(laptopFirst.index())
+                  .arg(externalSecond.index());
+      return false;
+    }
+  }
+  {
+    const PinSlotLock reused(external);
+    if (reused.index() != 0) {
+      error = QStringLiteral("A released pin slot was not reused on its output");
+      return false;
+    }
+  }
+  const QString hostile = QStringLiteral("SMOKE/../out put");
+  const QString hostileFile = PinSlotLock::fileName(hostile, 0);
+  const PinSlotLock sanitized(hostile);
+  if (!sanitized.isLocked() || sanitized.index() != 0 ||
+      hostileFile.contains(QLatin1Char('/')) ||
+      !QFileInfo::exists(QDir(secureRuntimeDirectory()).filePath(hostileFile))) {
+    error = QStringLiteral("An output name escaped its slot lock file name");
     return false;
   }
   return true;

@@ -15,6 +15,7 @@
 #include "recent-snaps.hpp"
 #include "scroll-capture.hpp"
 #include "startup-timing.hpp"
+#include "state-marker.hpp"
 #include "text-band.hpp"
 
 #include <QtConcurrent/QtConcurrentRun>
@@ -91,7 +92,23 @@ public:
     }
   }
   using QPlainTextEdit::cursorRect;
+  using QPlainTextEdit::inputMethodQuery;
   using QPlainTextEdit::setViewportMargins;
+
+  // The zero cursorWidth that hides the native caret also gives input methods
+  // a zero-width cursor rectangle. QInputMethod only maps a valid rectangle
+  // into window coordinates, so fcitx5's Qt plugin, which places its own
+  // candidate window, opened it at the editor's top-left corner instead of
+  // under the caret.
+  QVariant inputMethodQuery(Qt::InputMethodQuery query) const override {
+    QVariant value = QPlainTextEdit::inputMethodQuery(query);
+    if (query == Qt::ImCursorRectangle) {
+      QRectF caret = value.toRectF();
+      caret.setWidth(std::max<qreal>(caret.width(), 1.0));
+      value = caret;
+    }
+    return value;
+  }
 
   void setLogicalWrap(Annotation annotation, qreal canvasWidth) {
     logicalText_ = std::move(annotation);
@@ -1110,6 +1127,7 @@ CaptureEditor::CaptureEditor(CaptureData capture, CaptureMode mode,
       (quickOutputMode_ == QuickOutputMode::None ||
        quickOutputMode_ == QuickOutputMode::CopyAndPreview)) {
     startupTimingMark("recent shelf load dispatch starting");
+    recentsHidden_ = stateMarkerSet(QStringLiteral("recents-hidden"));
     loadRecents();
     startupTimingMark("recent shelf load dispatched");
   }
@@ -4211,16 +4229,27 @@ void CaptureEditor::finish(OutputMode mode) {
         result.error = error;
         return;
       }
-      if (savedPreview || autosave) {
-        const QString preview = launchPinnedCapture(
+      // A fresh or edited capture's timed preview is its completion UI,
+      // unless --notify makes a notification the completion UI for every
+      // saved capture. Either is started here, off the UI thread.
+      const QString headline = mode == OutputMode::Save
+                                   ? QStringLiteral("Screenshot saved")
+                                   : QStringLiteral("Screenshot saved and copied");
+      const bool preview = (savedPreview || autosave) && !notifySavedCaptures();
+      if (preview) {
+        const QString pin = launchPinnedCapture(
             image, renderedCaptureLogicalSize(captureCopy, image.size()), false,
             PinLifetime::Timed, result.error, launcher, log.recentId, result.saved,
             outputName);
-        if (preview.isEmpty()) {
+        if (pin.isEmpty()) {
           result.error = QStringLiteral("Saved to %1, but could not show its preview: %2")
                              .arg(result.saved, result.error);
           return;
         }
+      } else {
+        sendCaptureNotification(headline, result.saved, log.recentId, launcher);
+      }
+      if (savedPreview || autosave) {
         result.savedPreview = true;
         if (document)
           document->finishSavedPreview(log, result.saved);
@@ -4246,23 +4275,15 @@ void CaptureEditor::completeFinish(const FinishResult &result) {
   }
   snapshotPath_.clear();
   if (result.savedPreview) {
-    // The saved preview is the completion UI, and its originating preview
-    // has already been retired by the worker.
+    // The worker's saved preview or notification is the completion UI, and
+    // the originating preview already records the saved path.
     close();
     return;
   }
-  if (result.mode == OutputMode::CopyAndPreview) {
-    // The pin is the completion UI; a second notification would repeat it.
-    dismissEditor(false);
-    return;
-  }
+  // A copy-only preview's pin, or the worker's saved-capture notification,
+  // is the completion UI; only a plain copy still needs telling.
   if (result.mode == OutputMode::Copy)
     sendCaptureNotification(QStringLiteral("Screenshot copied to clipboard"));
-  else if (result.mode == OutputMode::Save)
-    sendCaptureNotification(QStringLiteral("Screenshot saved"), result.saved);
-  else
-    sendCaptureNotification(QStringLiteral("Screenshot saved and copied"),
-                            result.saved);
   dismissEditor(false);
 }
 
@@ -4439,7 +4460,7 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
   if (event->key() == Qt::Key_Question &&
       !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier |
                               Qt::MetaModifier)) &&
-      !textEditing() && shortcutGuide_->isVisible()) {
+      !textEditing() && shortcutGuideAllowed()) {
     if (!event->isAutoRepeat())
       shortcutGuide_->setExpanded(!shortcutGuide_->expanded());
     event->accept();
@@ -4533,6 +4554,23 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
     }
     if (event->key() == Qt::Key_S && !event->modifiers()) {
       setScrollMode(!scrollMode_);
+      return;
+    }
+    // Space is the focused-window capture above, so the shelf toggle is H.
+    if (event->key() == Qt::Key_H && !event->modifiers() && !scrollMode_) {
+      if (!event->isAutoRepeat() && !recents_.isEmpty()) {
+        recentsHidden_ = !recentsHidden_;
+        setStateMarker(QStringLiteral("recents-hidden"), recentsHidden_);
+        if (recentsHidden_)
+          setRecentsOpen(false);
+        else
+          trackRecentsHover();
+        setStatus(recentsHidden_ ? QStringLiteral("Recent captures hidden")
+                                 : QStringLiteral("Recent captures shown"));
+        updatePointerCursor();
+        update();
+      }
+      event->accept();
       return;
     }
     if ((event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab) &&
@@ -6885,7 +6923,7 @@ bool CaptureEditor::waitForRecents() {
 
 QVector<CaptureEditor::RecentCard>
 CaptureEditor::recentCards(qreal fan) const {
-  if (phase_ != Phase::Select || recents_.isEmpty())
+  if (phase_ != Phase::Select || recentsHidden_ || recents_.isEmpty())
     return {};
   // Card 0 is the newest and sits on top of the stack; fanned, it is the
   // topmost of the column. Each keeps its own aspect inside the card box.
@@ -7162,6 +7200,11 @@ QVector<QPair<QString, QString>> CaptureEditor::captureHotkeyEntries() const {
                   quickOutputMode_ == QuickOutputMode::None
                       ? QStringLiteral("Annotate after capture: on")
                       : QStringLiteral("Annotate after capture: off")});
+  if (!recents_.isEmpty() && !scrollMode_)
+    hotkeys.insert(hotkeys.size() - 1,
+                   {QStringLiteral("H"),
+                    recentsHidden_ ? QStringLiteral("Recent captures: hidden")
+                                   : QStringLiteral("Recent captures: shown")});
   return hotkeys;
 }
 
@@ -7892,13 +7935,16 @@ void CaptureEditor::paintEdit(QPainter &painter) {
   drawMeasureBadge(painter, rect(), cursor_, measurementText());
 }
 
+bool CaptureEditor::shortcutGuideAllowed() const {
+  return !windowedPresentation_ && !scrollPanel_ && phase_ != Phase::Export;
+}
+
 void CaptureEditor::paintEvent(QPaintEvent *event) {
-  const bool showGuide = !windowedPresentation_ && !scrollPanel_ &&
-                         phase_ != Phase::Export;
+  const bool showGuide = shortcutGuideAllowed();
   if (showGuide)
     shortcutGuide_->setEntries(phase_ == Phase::Edit ? editorHotkeyEntries()
                                                    : captureHotkeyEntries());
-  shortcutGuide_->setVisible(showGuide);
+  shortcutGuide_->setVisible(showGuide && shortcutGuide_->expanded());
   const bool firstPaint = !firstPaintReported_;
   if (firstPaint)
     startupTimingMark("first overlay paint started");

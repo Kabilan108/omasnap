@@ -1,8 +1,9 @@
 # Omasnap
 
 A native Wayland screenshot and annotation overlay for Niri. This is a Niri fork of
-[tobi/omasnap](https://github.com/tobi/omasnap); see
-[docs/upstream-v1.21-integration.md](docs/upstream-v1.21-integration.md) for what it
+[tobi/omasnap](https://github.com/tobi/omasnap); the integration records
+[docs/upstream-v1.25-integration.md](docs/upstream-v1.25-integration.md) and
+[docs/upstream-v1.21-integration.md](docs/upstream-v1.21-integration.md) say what it
 takes from upstream and what it changes. Upstream's [changelog](CHANGELOG.md) covers
 the shared features.
 
@@ -13,7 +14,7 @@ resizable vector layers and preserves the monitor's native pixels on scaled disp
 Select a capture and it copies straight to the clipboard, saves, and shows a small
 preview card in the corner for copying again, dragging into another app, or opening
 the editor on demand.
-The preview fades after 10 seconds of idle time. Hovering and unfinished actions
+The preview fades after 7 seconds of idle time. Hovering and unfinished actions
 pause its countdown. The pin button, `Ctrl+P`, `T` while hovered, or dragging the
 preview keeps it on screen.
 
@@ -24,10 +25,10 @@ preview keeps it on screen.
 - Smart selection by default: drag a freeform region or click for the full
   output; Space captures the focused window. Explicit region, window,
   fullscreen, and scrolling-region modes remain available.
-- Fresh captures save, copy to the clipboard, and show a corner preview for 10 seconds
+- Fresh captures save, copy to the clipboard, and show a corner preview for 7 seconds
   without taking keyboard focus. Hover for Pin, Edit, Copy, file drag, and Close
   controls. Use the pin button, `Ctrl+P`, `T` while hovered, or drag the preview to
-  keep it on screen.
+  keep it on screen. Edit opens on the preview's output.
 - A pointer-side readout that turns any drag into a ruler: the pointer position
   while the crosshair is idle, then the frame size in native export pixels while a
   region or a crop handle is being sized. Crosshair guides
@@ -86,7 +87,8 @@ preview keeps it on screen.
 - Open an image already on the clipboard directly in the annotation editor.
 - A recents shelf: the select overlay stacks small cards of the last five captures
   along the right edge; hover to fan them out, click one to reopen it in the editor
-  with its layers still editable instead of taking a new screenshot.
+  with its layers still editable instead of taking a new screenshot. `H`
+  hides the shelf, and it stays hidden until `H` brings it back.
 - Correct native-pixel export on fractional or integer-scaled monitors.
 
 ## Platform scope
@@ -106,7 +108,8 @@ Runtime commands used by the application:
 - `tesseract`
 - `xdg-open`, plus `xdg-mime` and `busctl` when available, for Show in folder
 - `notify-send`; saved captures include an Edit action that reopens them in
-  Omasnap. Notification failure does not invalidate output.
+  Omasnap, and Open as well under `--notify`. Notification failure does not
+  invalidate output.
 
 ## Install with Nix
 
@@ -233,7 +236,7 @@ omasnap smart
 
 These options choose what is initially selected. `--capture-window` captures the
 window that had keyboard focus when Omasnap started. Completing a selection saves it,
-copies it, and shows a preview that fades after 10 seconds of idle time unless kept.
+copies it, and shows a preview that fades after 7 seconds of idle time unless kept.
 Existing previews and pins stay on screen and appear in later captures; close or move
 them aside when they cover the next capture area.
 
@@ -251,6 +254,15 @@ Quick output skips the preview as well as the annotation editor. Add `--copy` to
 only, `--save` to save only, or both flags to copy and save. Region and window captures output after selection;
 fullscreen captures output immediately. Quick output cannot be combined with `--file`,
 `--clipboard`, or `--pin`.
+
+Add `--notify` to announce every saved capture (fresh autosaved shots, scroll captures,
+and saves from the editor or Save As) in a notification instead of a preview. It shows
+the capture's image, whether it was copied too, and its size, with **Open** to view the
+saved PNG in the default viewer and **Edit** to reopen the capture with its layers and
+undo history. The notification is sent through `notify-send` with actions, so the
+notification daemon must support actions; mako, dunst, swaync and fnott do. Pins and
+editors opened from that capture keep the option. Copy-only captures still show their
+preview, since there is no file to open.
 
 ### One instance, toggled by the same hotkey
 
@@ -305,12 +317,14 @@ omasnap --clipboard
 ```
 
 The clipboard must offer readable image data. Text-only clipboard contents return an
-error instead of opening an empty editor.
+error instead of opening an empty editor. Reading an image format stops as soon as it
+passes 256 MiB, and the next offered format is tried; the image is refused if none fits.
 
 The editor opens on the focused Niri output.
 
-File URLs are accepted too. A saved capture notification's Edit action launches
-`omasnap` on the finished screenshot, so it can be reopened and re-annotated.
+File URLs are accepted too. A saved capture notification's Edit action reopens the
+capture from the recent shelf with its layers and undo history, or opens the saved
+screenshot itself once the shelf has dropped that capture.
 
 ### Recent captures
 
@@ -319,7 +333,8 @@ on a shelf of the five most recent under
 `~/.local/state/omasnap/recent/` (`OMASNAP_RECENT_DIR` overrides). The select
 overlay shows them as a small stack of cards on the right; hovering fans them out
 and clicking one reopens that capture in the editor, undo history intact, in place
-of a new screenshot. No annotation, Copy, Save, or pin action is required: the
+of a new screenshot. `H` hides the shelf, and later captures keep it hidden until
+`H` shows it again. No annotation, Copy, Save, or pin action is required: the
 shot remains available after its preview card expires or closes. Dismissing
 the editor with `Esc` also remembers its current edits. Editing the same shot
 updates its existing entry; cancelling before selecting a capture adds nothing.
@@ -403,9 +418,10 @@ Install the corresponding Tesseract language data before adding a language to
 ## Controls
 
 The capture picker and fullscreen annotator show a readable shortcuts card in
-the lower left. Press `?` or click its **Shortcuts** header to collapse or expand
-it. The card scrolls on shorter screens; `?` still types normally in a text
-annotation. The windowed editor keeps its guide above the toolbar.
+the lower left. Press `?` or click its **Shortcuts** header to close it; it stays
+closed for later captures until `?` brings it back. The card scrolls on shorter
+screens; `?` still types normally in a text annotation. The windowed editor keeps
+its guide above the toolbar.
 
 ### Capture selection
 
@@ -436,6 +452,7 @@ the region.
 | `Enter` | In smart mode, capture the full focused output |
 | `Ctrl+A` | Select the full focused output |
 | Hover the right-edge stack | Fan out the five most recent captures; click one to reopen it |
+| `H` | Hide or show the recent captures; the choice is remembered (not in scrolling-region mode) |
 | `Esc` | Dismiss; cancel a selection drag if one is in progress |
 
 Region memory is stored in Omasnap's private runtime directory. It survives
@@ -490,27 +507,29 @@ region after changing the display layout.
 
 Save As opens a file chooser (floated by the window rule above). Saving from the editor with Save, Save As,
 or Copy + Save closes it and shows an unpinned preview in the lower-right stack,
-replacing an originating preview or pin. The preview has the usual 10-second idle
+replacing an originating preview or pin. The preview has the usual 7-second idle
 timeout; its folder and Copy path buttons refer to the exact PNG you saved.
 Cancel or a failed save keeps the editor open. Recent captures retain the editable
 layers and undo history.
 
 ### Capture previews and pins
 
-Normal captures show a preview card that fades after 10 seconds of idle time. Hovering
+Normal captures show a preview card that fades after 7 seconds of idle time. Hovering
 and in-progress actions pause the countdown; it resumes when the preview is idle again.
 Clicking, scrolling, copying, or editing does not pin the preview. The pin button,
 `Ctrl+P` on a focused preview, or `T` ("tack") while hovered keeps it until closed.
 Dragging the preview also keeps it. `T` remains the Text shortcut in the editor. Kept
 shots show a pin icon even when the other controls are hidden. Unpinning starts a fresh
-10-second countdown. Opening Edit leaves the preview's expiry policy unchanged; pin it
+7-second countdown. Opening Edit leaves the preview's expiry policy unchanged; pin it
 first to keep the preview available throughout annotation.
 
 In the editor, `Ctrl+P` or `P` renders a capture that stays pinned. It writes a
 `pin-<pid>-<n>-<random>.png` under the runtime snapshot directory and launches the same
 `omasnap` executable in detached pin mode. Each pin is a layer-shell surface on the
 capture's output, visible on every workspace. Pins take the first free slot in a column
-growing up from the bottom-right corner, wrapping into further columns.
+growing up from the bottom-right corner, wrapping into further columns. Each output
+stacks its own pins. A pin keeps its slot until it closes, so closing a lower pin leaves
+a gap that the next new pin fills.
 
 Captures use fast lossless PNG encoding. The card loads a separate small display image;
 the clipboard, saved files, and editor retain every original pixel. The card is 200

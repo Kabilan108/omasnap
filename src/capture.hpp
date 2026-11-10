@@ -259,8 +259,19 @@ private:
 [[nodiscard]] QString operationLogPath(const QString &imagePath);
 [[nodiscard]] bool saveOperationLog(const QString &path, const OperationLog &log,
                                     QString &error);
+/** `notOperationLog`, when given, is set when the file is not an omasnap
+ *  operation log at all: well-formed JSON that is not an object with a
+ *  numeric version and an ops array. Text that does not parse, or a log of
+ *  another version, leaves it false: it may be omasnap's own, cut short or
+ *  newer. */
 [[nodiscard]] bool loadOperationLog(const QString &path, OperationLog &log,
-                                    QString &error);
+                                    QString &error,
+                                    bool *notOperationLog = nullptr);
+/** Reads the operation log beside an opened image (`--file`, `--pin`), if it
+ *  has one. Without one, or when that .json is another program's file, `log`
+ *  is left empty and this succeeds. */
+[[nodiscard]] bool loadSidecarOperationLog(const QString &imagePath,
+                                           OperationLog &log, QString &error);
 [[nodiscard]] QString temporaryExportPath();
 /** Restore a document's logical size from its operation log or, for flattened
  *  exports, its PNG metadata. Untagged images use their pixel dimensions. */
@@ -292,8 +303,15 @@ void describeFileCapture(CaptureData &capture, QImage image,
  *  doesn't match one. */
 [[nodiscard]] bool backgroundStyleFromName(const QString &name,
                                            BackgroundStyle &style);
-/** Loads the current Wayland clipboard image. */
-[[nodiscard]] bool loadClipboardImage(QImage &image, QString &error);
+/** Largest encoded clipboard image `--clipboard` reads: 256 MiB, well above
+ *  any real screenshot PNG. */
+inline constexpr qint64 kMaxClipboardImageBytes = qint64(256) * 1024 * 1024;
+/** Loads the current Wayland clipboard image. A format is skipped once
+ *  wl-paste delivers more than `maxImageBytes` of it, and the image refused
+ *  when no other offered format loads; only tests pass another limit. */
+[[nodiscard]] bool loadClipboardImage(
+    QImage &image, QString &error,
+    qint64 maxImageBytes = kMaxClipboardImageBytes);
 [[nodiscard]] bool copyPngFileToClipboard(const QString &path, QString &error);
 [[nodiscard]] bool copyImageToClipboard(const QImage &image, QString &error);
 [[nodiscard]] bool quickOutput(QImage image, QuickOutputMode mode,
@@ -439,9 +457,34 @@ bool removeEditorHandoff(const QString &path, const QString &token);
 [[nodiscard]] bool saveTemporarySnapshot(const QImage &image, QString path,
                                          QString &error);
 [[nodiscard]] QString recognizeText(const QImage &image, QString &error);
+/** Whether saved captures are announced in a notification with Open and
+ *  Edit actions instead of a timed preview. Set by --notify, which main()
+ *  carries through OMASNAP_NOTIFY to the pins and editors a capture starts. */
+[[nodiscard]] bool notifySavedCaptures();
 /** Builds the notify-send argv for a notification without an image. */
 [[nodiscard]] QStringList captureNotificationArguments(const QString &message);
-/** Notifies without an image directly. With an image, a detached
- *  `omasnap --saved-notification` helper waits for the Edit action. */
-void sendCaptureNotification(const QString &message,
-                             const QString &imagePath = {});
+/** Builds the notify-send argv for a saved capture. With actions (--notify),
+ *  the headline is the summary, details (the image's size) the body, and
+ *  Open comes before Edit; otherwise it has a single Edit action. */
+[[nodiscard]] QStringList savedNotificationArguments(const QString &headline,
+                                                     const QString &imagePath,
+                                                     bool actions,
+                                                     const QString &details = {});
+/** The command, program first, that a saved notification's action runs.
+ *  Edit reopens recentId's layers when given, with the image as fallback once
+ *  the shelf has dropped that capture. Empty for an unknown action. */
+[[nodiscard]] QStringList savedNotificationCommand(const QString &action,
+                                                   const QString &imagePath,
+                                                   const QString &recentId);
+/** The detached `omasnap --saved-notification` helper: shows the saved
+ *  capture's notification, waits for it to close, and starts the chosen
+ *  action through launcher when one is given. */
+int runSavedNotification(
+    const QString &inputPath, const QString &headline, const QString &recentId,
+    const std::function<bool(const QString &, const QStringList &)> &launcher = {});
+/** Notifies without an image directly. With an image, starts the detached
+ *  saved-notification helper, through launcher when one is given. */
+void sendCaptureNotification(
+    const QString &message, const QString &imagePath = {},
+    const QString &recentId = {},
+    const std::function<bool(const QString &, const QStringList &)> &launcher = {});

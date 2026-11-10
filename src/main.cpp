@@ -11,6 +11,7 @@
 #include "pin-file.hpp"
 #include "recent-snaps.hpp"
 #include "startup-timing.hpp"
+#include "state-marker.hpp"
 
 #include <LayerShellQt/Window>
 
@@ -20,7 +21,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QProcess>
 #include <QTimer>
 #include <QApplication>
 
@@ -44,48 +44,6 @@
 #include <unistd.h>
 
 namespace {
-int runSavedNotification(const QString &inputPath) {
-  const QString imagePath = resolveLocalImagePath(inputPath);
-  if (imagePath.isEmpty()) {
-    qWarning().noquote()
-        << QStringLiteral("Saved screenshot no longer exists: %1").arg(inputPath);
-    return 1;
-  }
-  if (qEnvironmentVariableIsSet("OMASNAP_DISABLE_NOTIFICATIONS"))
-    return 0;
-
-  QProcess notification;
-  notification.setProcessChannelMode(QProcess::SeparateChannels);
-  notification.start(QStringLiteral("notify-send"),
-                     {QStringLiteral("--app-name"), QStringLiteral("omasnap"),
-                      QStringLiteral("--expire-time"), QStringLiteral("10000"),
-                      QStringLiteral("--icon"), imagePath,
-                      QStringLiteral("--action=edit=Edit screenshot"),
-                      QStringLiteral("--wait"), QStringLiteral("Omasnap"),
-                      QStringLiteral("Screenshot saved")});
-  if (!notification.waitForStarted(2000)) {
-    qWarning().noquote()
-        << QStringLiteral("Could not start saved screenshot notification: %1")
-               .arg(notification.errorString());
-    return 1;
-  }
-  if (!notification.waitForFinished(-1))
-    return 1;
-  if (notification.exitStatus() != QProcess::NormalExit ||
-      notification.exitCode() != 0)
-    return 0;
-
-  if (QString::fromUtf8(notification.readAllStandardOutput()).trimmed() ==
-      QStringLiteral("edit")) {
-    if (!QProcess::startDetached(QCoreApplication::applicationFilePath(),
-                                 {QStringLiteral("--file"), imagePath})) {
-      qWarning() << "Could not reopen saved screenshot";
-      return 1;
-    }
-  }
-  return 0;
-}
-
 class PosixSignalNotifier final : public QObject {
 public:
   explicit PosixSignalNotifier(QObject *parent = nullptr) : QObject(parent) {
@@ -189,7 +147,6 @@ int main(int argc, char **argv) {
   // widget is created, so painter/widget default-font text keeps its size and
   // face.
   QApplication::setFont(chromeDefaultFont());
-  initializeChromeTheme();
 
   // A stitched scroll capture (or any tall pinned image) exceeds Qt's default
   // 256 MB image-decode allocation limit; lift it so --file/--pin can open it.
@@ -200,6 +157,12 @@ int main(int argc, char **argv) {
   configureCaptureCommandLine(parser);
   parser.process(application);
   startupTimingMark("command line parsed");
+  // The environment carries --notify to the pins and editors this starts.
+  if (parser.isSet(QStringLiteral("notify")))
+    qputenv("OMASNAP_NOTIFY", "1");
+  // After parsing: --help and --version exit() inside process(), which skips
+  // ~QApplication's wait for the theme loader thread and crashes its teardown.
+  initializeChromeTheme();
 
   QString filePath = parser.value(QStringLiteral("file"));
   const bool clipboardInput = parser.isSet(QStringLiteral("clipboard"));
@@ -247,7 +210,13 @@ int main(int argc, char **argv) {
       qCritical() << "Saved notification mode cannot be combined with other targets";
       return 2;
     }
-    return runSavedNotification(parser.value(QStringLiteral("saved-notification")));
+    if (qEnvironmentVariableIsSet("OMASNAP_DISABLE_NOTIFICATIONS"))
+      return 0;
+    const QString headline = parser.value(QStringLiteral("headline"));
+    return runSavedNotification(
+        parser.value(QStringLiteral("saved-notification")),
+        headline.isEmpty() ? QStringLiteral("Screenshot saved") : headline,
+        parser.value(QStringLiteral("recent")));
   }
   if (parser.isSet(QStringLiteral("pin")) || parser.isSet(QStringLiteral("preview"))) {
     if (!filePath.isEmpty() || clipboardInput || requestedModes > 0 ||
@@ -306,6 +275,25 @@ int main(int argc, char **argv) {
   if (clipboardInput && (!filePath.isEmpty() || requestedModes > 0)) {
     qCritical() << "Clipboard input cannot be combined with another target";
     return 2;
+  }
+  // --recent reopens a capture's layers from the recent shelf, like the
+  // overlay's recent cards; the image given alongside is the fallback once
+  // the shelf has dropped that capture.
+  std::optional<RecentSnap> reopenedRecent;
+  if (parser.isSet(QStringLiteral("recent"))) {
+    if (clipboardInput || requestedModes > 0) {
+      qCritical() << "A recent capture cannot be combined with another target";
+      return 2;
+    }
+    QString recentError;
+    if (!resolveRecentTarget(parser.value(QStringLiteral("recent")), filePath,
+                             reopenedRecent, recentError)) {
+      qCritical().noquote() << recentError;
+      sendCaptureNotification(recentError);
+      return 1;
+    }
+    if (reopenedRecent)
+      filePath = reopenedRecent->sourcePath;
   }
   const bool editingImage = clipboardInput || !filePath.isEmpty();
   if (parser.isSet(QStringLiteral("output")) && !editingImage) {
@@ -390,9 +378,7 @@ int main(int argc, char **argv) {
         return 1;
       }
       inputName = localFile;
-      const QString sidecar = operationLogPath(localFile);
-      if (QFile::exists(sidecar) &&
-          !loadOperationLog(sidecar, restoredLog, error)) {
+      if (!loadSidecarOperationLog(localFile, restoredLog, error)) {
         qCritical().noquote()
             << QStringLiteral("Could not restore operation log: %1").arg(error);
         return 1;
@@ -497,6 +483,8 @@ int main(int argc, char **argv) {
         QStringLiteral("Editing pinned capture · Esc returns edits to the pin"));
   editor.setPinDocument(std::move(pinDocument));
   editor.setFocusedWindowTarget(std::move(focusedWindowJson));
+  if (reopenedRecent)
+    editor.setEditingRecent(std::move(*reopenedRecent));
   startupTimingMark("CaptureEditor constructed");
   editor.setScreen(targetScreen);
   if (windowedEditing) {
@@ -536,6 +524,7 @@ int main(int argc, char **argv) {
     // The closed editor may still be retaining its recent document. A fresh
     // capture must not mistake that background save for an active overlay.
     editor.hide();
+    finishSavingStateMarkers();
     instanceLock.unlock();
     return result;
   }
@@ -573,6 +562,7 @@ int main(int argc, char **argv) {
   // A clean window capture temporarily replaces Niri's clipboard contents.
   // Restore them before a replacement instance can take the lock.
   editor.waitForWindowCapture();
+  finishSavingStateMarkers();
   instanceLock.unlock();
   return result;
 }

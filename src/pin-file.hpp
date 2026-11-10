@@ -32,10 +32,11 @@ private:
   bool preserve_ = false;
 };
 
-/** Holds the first free layout slot while a pin is active. */
+/** Holds the first free layout slot on one output while a pin is active.
+ *  An empty output name uses a slot column shared by all unnamed outputs. */
 class PinSlotLock {
 public:
-  PinSlotLock();
+  explicit PinSlotLock(const QString &output);
   ~PinSlotLock();
 
   PinSlotLock(const PinSlotLock &) = delete;
@@ -43,6 +44,7 @@ public:
 
   [[nodiscard]] bool isLocked() const;
   [[nodiscard]] int index() const;
+  [[nodiscard]] static QString fileName(const QString &output, int index);
 
 private:
   int fd_ = -1;

@@ -47,10 +47,10 @@ covers.
 
 | Path | Purpose |
 |---|---|
-| `src/main.cpp` | CLI dispatch, single-instance lock, overlay vs windowed editor setup, saved-notification helper |
+| `src/main.cpp` | CLI dispatch, single-instance lock, overlay vs windowed editor setup, `--notify` and `--recent` handling |
 | `src/cli-path.cpp/.hpp` | Command-line options and image target resolution |
 | `src/instance-lock.cpp/.hpp` | Single-instance handover: cancel a running overlay, or stop it and take over for `--file` |
-| `src/capture.cpp/.hpp` | Niri discovery, capture, clean window capture with clipboard preservation, render pipeline, output, operation-log persistence |
+| `src/capture.cpp/.hpp` | Niri discovery, capture, clean window capture with clipboard preservation, render pipeline, output, operation-log persistence, `notify-send` and the saved-notification helper |
 | `src/surface-capture.cpp` | In-process output capture via `ext-image-copy-capture` |
 | `src/editor.cpp/.hpp`, `src/editor-save-as.cpp` | Annotation editor: tools, layers, undo/redo, select↔edit phases, handoff, export, Save As |
 | `src/overlay-chrome.cpp/.hpp`, `src/shortcut-guide.cpp/.hpp`, `src/chrome-theme.cpp/.hpp` | Shared overlay chrome, the shortcuts card, and the built-in chrome palette |
@@ -62,7 +62,7 @@ covers.
 | `src/pin.cpp/.hpp`, `src/pin-file.cpp/.hpp`, `src/pin-layout.cpp/.hpp`, `src/pin-expiry.cpp/.hpp` | Layer-shell pins, their files and slots, card geometry, preview countdown |
 | `src/png.cpp/.hpp` | Fast libdeflate PNG writer with logical-size metadata |
 | `src/cut.cpp/.hpp`, `src/text-band.cpp/.hpp`, `src/stroke-smoothing.cpp/.hpp`, `src/eyedropper.cpp/.hpp`, `src/icons.cpp/.hpp` | Editing helpers and the vector icon renderer |
-| `tests/*-smoke.cpp/.hpp` | Headless Qt Test coverage, including fake `niri`/`wl-copy`/`wl-paste` commands |
+| `tests/*-smoke.cpp/.hpp` | Headless Qt Test coverage, including fake `niri`/`wl-copy`/`wl-paste`/`notify-send` commands |
 | `docs/` | Principles in depth, the upstream integration records (`upstream-v*-integration.md`), and the maintainer playbook and sync state (`maintaining.md`, `upstream-sync.md`) |
 | `flake.nix` | Nix package, runtime dependencies, development shell, and package check |
 | `CMakeLists.txt` | Build definition; **the version lives here** (`project(omasnap VERSION ...)`) |

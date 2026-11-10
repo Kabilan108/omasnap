@@ -36,8 +36,8 @@ screenshot tool, and it does not try to keep the Hyprland path working.
   pins pointer focus to an exclusive layer.)
 - Auto-scroll injects wheel events through a `zwlr_virtual_pointer_v1` bound to
   the capture output. Positive axis values scroll the page down on Niri.
-- Notifications use `notify-send`; saved captures get an Edit action through a
-  detached `omasnap --saved-notification` helper.
+- Notifications use `notify-send`; saved captures get an Edit action (Open and
+  Edit under `--notify`) through a detached `omasnap --saved-notification` helper.
 
 ## Generic Wayland underneath
 

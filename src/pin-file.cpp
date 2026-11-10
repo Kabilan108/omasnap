@@ -66,13 +66,26 @@ void PinSnapshotFile::finishSavedPreview(const OperationLog &log,
     qWarning("Could not replace the originating preview: %s", qPrintable(error));
 }
 
-PinSlotLock::PinSlotLock() {
+QString PinSlotLock::fileName(const QString &output, int index) {
+  if (output.isEmpty())
+    return QStringLiteral(".pin-slot-%1.lock").arg(index);
+  // Output names come from the compositor; keep them to one path component.
+  // The index stays last and dash-free, so distinct names never collide.
+  QString key = output;
+  for (QChar &character : key) {
+    if (!character.isLetterOrNumber() && character != QLatin1Char('-') &&
+        character != QLatin1Char('_'))
+      character = QLatin1Char('_');
+  }
+  return QStringLiteral(".pin-slot-%1-%2.lock").arg(key).arg(index);
+}
+
+PinSlotLock::PinSlotLock(const QString &output) {
   const QString runtime = secureRuntimeDirectory();
   if (runtime.isEmpty())
     return;
   for (int candidate = 0; candidate < 1024; ++candidate) {
-    const QString path = QDir(runtime).filePath(
-        QStringLiteral(".pin-slot-%1.lock").arg(candidate));
+    const QString path = QDir(runtime).filePath(fileName(output, candidate));
     const int fd = ::open(QFile::encodeName(path).constData(),
                           O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
                           S_IRUSR | S_IWUSR);
@@ -100,8 +113,7 @@ int PinSlotLock::index() const { return index_; }
 
 std::shared_ptr<PinSnapshotFile> copyPinDocument(const QString &path, QString &error) {
   OperationLog log;
-  const QString sidecar = operationLogPath(path);
-  if (QFile::exists(sidecar) && !loadOperationLog(sidecar, log, error))
+  if (!loadSidecarOperationLog(path, log, error))
     return {};
   // The visible PNG is flattened. If its capture is still on the shelf,
   // restore the working document so editing a preview retains its layers too.
