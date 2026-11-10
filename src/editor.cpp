@@ -4552,7 +4552,8 @@ void CaptureEditor::keyPressEvent(QKeyEvent *event) {
       setScrollMode(!scrollMode_);
       return;
     }
-    if (event->key() == Qt::Key_Space && !event->modifiers()) {
+    // Space is the focused-window capture above, so the shelf toggle is H.
+    if (event->key() == Qt::Key_H && !event->modifiers() && !scrollMode_) {
       if (!event->isAutoRepeat() && !recents_.isEmpty()) {
         recentsHidden_ = !recentsHidden_;
         setStateMarker(QStringLiteral("recents-hidden"), recentsHidden_);
@@ -7195,9 +7196,9 @@ QVector<QPair<QString, QString>> CaptureEditor::captureHotkeyEntries() const {
                   quickOutputMode_ == QuickOutputMode::None
                       ? QStringLiteral("Annotate after capture: on")
                       : QStringLiteral("Annotate after capture: off")});
-  if (!recents_.isEmpty())
+  if (!recents_.isEmpty() && !scrollMode_)
     hotkeys.insert(hotkeys.size() - 1,
-                   {QStringLiteral("Space"),
+                   {QStringLiteral("H"),
                     recentsHidden_ ? QStringLiteral("Recent captures: hidden")
                                    : QStringLiteral("Recent captures: shown")});
   return hotkeys;

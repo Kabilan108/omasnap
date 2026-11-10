@@ -6228,16 +6228,53 @@ bool runRecentsShelfSmoke(QApplication &application, QString &error) {
       error = QStringLiteral("Shelf stayed open after the pointer left");
       return false;
     }
-    // Space hides the shelf, and the next overlay remembers it.
+    const auto legendEntry = [](const CaptureEditor &overlay) {
+      for (const auto &entry : overlay.captureHotkeysForTest())
+        if (entry.second.startsWith(QStringLiteral("Recent captures")))
+          return entry;
+      return QPair<QString, QString>{};
+    };
+    if (legendEntry(again) != qMakePair(QStringLiteral("H"),
+                                        QStringLiteral("Recent captures: shown"))) {
+      error = QStringLiteral("The capture legend does not offer H for the recents shelf");
+      return false;
+    }
+    // Space stays the clean focused-window capture; with no focused window
+    // recorded it only reports that, leaving the shelf alone.
+    QTest::keyClick(&again, Qt::Key_Space);
+    application.processEvents();
+    if (again.recentsHiddenForTest() ||
+        again.statusForTest() !=
+            QStringLiteral("No focused regular window was available when capture started")) {
+      error = QStringLiteral("Space no longer took the focused-window capture path");
+      return false;
+    }
+    // Modified or held H, and H in scroll mode, leave the shelf as it is.
+    QTest::keyClick(&again, Qt::Key_H, Qt::ShiftModifier);
+    QTest::keyClick(&again, Qt::Key_H, Qt::ControlModifier);
+    QKeyEvent heldH(QEvent::KeyPress, Qt::Key_H, Qt::NoModifier, QStringLiteral("h"),
+                    true);
+    QApplication::sendEvent(&again, &heldH);
+    QTest::keyClick(&again, Qt::Key_S);
+    QTest::keyClick(&again, Qt::Key_H);
+    const bool scrollLegend = !legendEntry(again).first.isEmpty();
+    QTest::keyClick(&again, Qt::Key_S);
+    application.processEvents();
+    if (again.recentsHiddenForTest() || again.scrollModeForTest() || scrollLegend) {
+      error = QStringLiteral("A modified, held, or scroll-mode H toggled the recents shelf");
+      return false;
+    }
+    // H hides the shelf, and the next overlay remembers it.
     const QPoint shelfPoint =
         again.recentCardRectForTest(0).center().toPoint();
-    QTest::keyClick(&again, Qt::Key_Space);
+    QTest::keyClick(&again, Qt::Key_H);
     application.processEvents();
     QTest::mouseMove(&again, shelfPoint, 20);
     application.processEvents();
     if (!again.recentsHiddenForTest() || again.recentsOpenForTest() ||
-        !again.recentCardRectForTest(0).isNull()) {
-      error = QStringLiteral("Space did not hide the recents shelf");
+        !again.recentCardRectForTest(0).isNull() ||
+        legendEntry(again).second != QStringLiteral("Recent captures: hidden")) {
+      error = QStringLiteral("H did not hide the recents shelf");
       return false;
     }
     again.close();
@@ -6253,11 +6290,29 @@ bool runRecentsShelfSmoke(QApplication &application, QString &error) {
         error = QStringLiteral("A hidden recents shelf came back next capture");
         return false;
       }
-      QTest::keyClick(&hidden, Qt::Key_Space);
+      QTest::keyClick(&hidden, Qt::Key_H);
       application.processEvents();
       if (hidden.recentsHiddenForTest() ||
           hidden.recentCardRectForTest(0).isNull()) {
-        error = QStringLiteral("Space did not bring the recents shelf back");
+        error = QStringLiteral("H did not bring the recents shelf back");
+        return false;
+      }
+      // Past selection, H is the highlighter and types into a text draft.
+      QTest::mousePress(&hidden, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+      QTest::mouseMove(&hidden, QPoint(400, 300), 20);
+      QTest::mouseRelease(&hidden, Qt::LeftButton, Qt::NoModifier, QPoint(400, 300));
+      application.processEvents();
+      QTest::keyClick(&hidden, Qt::Key_T);
+      QTest::mouseClick(&hidden, Qt::LeftButton, Qt::NoModifier, QPoint(200, 200));
+      application.processEvents();
+      auto *draft = qobject_cast<QPlainTextEdit *>(QApplication::focusWidget());
+      if (draft)
+        QTest::keyClick(draft, Qt::Key_H);
+      application.processEvents();
+      if (!hidden.editingForTest() || !draft ||
+          draft->toPlainText() != QStringLiteral("h") ||
+          hidden.recentsHiddenForTest()) {
+        error = QStringLiteral("H while typing a label toggled the recents shelf");
         return false;
       }
       hidden.close();
