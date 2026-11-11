@@ -20,7 +20,10 @@ examined, outcome.
   deferred v1.24.0 batch: took #200, #199, #196, #194, #188, #187, #186, #185, #173 and
   `1413492`; ported #197 `--notify` onto `notify-send` and `b0f97d3` onto `H`; declined
   #165; fixed fork #4. Shipped as 2026.11.10. Filed fork #6 (auto scroll's early end
-  on near-identical lines, pre-existing).
+  on near-identical lines, pre-existing). 2026.11.10 failed `nix build`: upstream's
+  #188 clipboard-limit test wrote a `#!/usr/bin/env bash` fake, which the Nix sandbox
+  can't run. 2026.11.11 fixes the test and adds a Nix CI job; `nix build` is now a
+  release gate.
 - 2026-10-27: proposed upstream `v1.24.0` (`a432f40`): take #200, #199, #194,
   `1413492` and the releases; port #197 `--notify` onto `notify-send` with
   `--recent`; decline #165 (our `--output` already does it); fork #4 as an extra.

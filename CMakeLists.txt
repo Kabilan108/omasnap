@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(omasnap VERSION 2026.11.10 LANGUAGES C CXX)
+project(omasnap VERSION 2026.11.11 LANGUAGES C CXX)
 # The upstream commit this release integrates, as `git describe --tags --long
 # --match 'upstream/*'` names it without the "upstream/" prefix.
 set(OMASNAP_UPSTREAM_BASE "v1.25.0-0-g008a3d1")

@@ -170,8 +170,14 @@ bool runClipboardSizeLimitSmoke(QString &error) {
   // the machine is.
   const QString served =
       QDir(directory.path()).filePath(QStringLiteral("served"));
-  const QByteArray script = QByteArrayLiteral(
-      "#!/usr/bin/env bash\n"
+  const QString bash = QStandardPaths::findExecutable(QStringLiteral("bash"));
+  if (bash.isEmpty()) {
+    error = QStringLiteral("Could not find bash for clipboard-limit command");
+    return false;
+  }
+  const QByteArray script = QByteArrayLiteral("#!") + bash.toUtf8() +
+                            QByteArrayLiteral(
+      "\n"
       "set -euo pipefail\n"
       "if [[ \"${1:-}\" == \"--list-types\" ]]; then\n"
       "  printf 'image/png\\n'\n"

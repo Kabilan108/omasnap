@@ -10,6 +10,20 @@ permissions:
   contents: write
 
 jobs:
+  nix:
+    name: Nix package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Build the flake package with its sandboxed smoke suite
+        run: nix build .# --print-build-logs
+
   archlinux:
     name: Arch Linux x86_64
     runs-on: ubuntu-latest
