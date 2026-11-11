@@ -65,8 +65,11 @@ Leave untracked files in the main checkout alone.
    the approved upstream head by merge, so that it becomes an ancestor and the next
    survey range starts from it; neutralize declined changes in follow-up commits.
    Run `review-loop` at each checkpoint: after the merge builds, after each port, and
-   on the final head. Done when `nix develop -c make check` exits 0 on the head and
-   the final review round reports no remaining findings on that same head.
+   on the final head. Done when `nix develop -c make check` and `nix build .#` both
+   exit 0 on the head and the final review round reports no remaining findings on
+   that same head. `nix build` runs the smoke suite in the Nix sandbox, which is what
+   Tony's dotfiles build; `make check` and the Arch CI job don't catch
+   sandbox-only failures such as a test script that calls `/usr/bin/env`.
 
 4. **Live test** on sietch's desktop. First check that nothing else is driving it:
    - no `dotoold`, `ydotoold`, `wtype`, `wf-recorder`, or `gpu-screen-recorder`
@@ -90,7 +93,9 @@ Leave untracked files in the main checkout alone.
    - Set the release version (see `AGENTS.md`).
 
    Open a PR against `niri-native` whose body includes the review log. Watch CI by
-   run ID, merge with a merge commit, tag, and push that one tag. Watch the tag
+   run ID; both the Nix and Arch jobs must pass. Merge with a merge commit, run
+   `nix build 'github:Kabilan108/omasnap/<merge sha>'` and confirm it exits 0, then
+   tag and push that one tag. Watch the tag
    workflow by run ID, then write release notes naming the upstream base and what Tony
    should check on his laptop. Notify Tony with the release link. The cycle ends
    here: Tony updates the dotfiles flake and does QA himself.

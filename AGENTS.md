@@ -84,7 +84,10 @@ files; do not run two smoke suites against the same checkout at once. If it exit
 with a bare code and no message, rerun with `QT_FORCE_STDERR_LOGGING=1` so Qt's
 warnings reach stderr instead of the journal.
 
-Always run `make check` after behavioral changes. CI
+Always run `make check` after behavioral changes. Before a release, also run
+`nix build .#`: it reruns the smoke suite inside the Nix sandbox, which has no
+`/usr/bin/env` or other FHS paths, so a fake command in a test must find its
+interpreter on `PATH` (see `QStandardPaths::findExecutable` in the smoke tests). CI
 (`.github/workflows/build-linux.yml`) runs the same build and smoke in an Arch
 container on every pull request and release tag. Live compositor behavior (capture, scrolling,
 pins, focus) needs a manual check on Niri.
@@ -103,7 +106,7 @@ release integrates; name it in the release notes too.
 1. Set `project(omasnap VERSION ...)` in `CMakeLists.txt` and `version` in
    `flake.nix` to the release version. When the release integrates upstream work,
    also set `OMASNAP_UPSTREAM_BASE`.
-2. Build and run the smoke test (above).
+2. Run `make check` and `nix build .#` (above); both must exit 0.
 3. Commit, tag `v<version>`, push `niri-native` and that one tag. The GitHub workflow
    attaches the build artifact to the release automatically.
 
