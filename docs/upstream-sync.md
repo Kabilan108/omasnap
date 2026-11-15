@@ -23,7 +23,8 @@ examined, outcome.
   on near-identical lines, pre-existing). 2026.11.10 failed `nix build`: upstream's
   #188 clipboard-limit test wrote a `#!/usr/bin/env bash` fake, which the Nix sandbox
   can't run. 2026.11.11 fixes the test and adds a Nix CI job; `nix build` is now a
-  release gate.
+  release gate. 2026.11.15 fixes a check-phase race where closing a pin
+  left its edited document locked.
 - 2026-10-27: proposed upstream `v1.24.0` (`a432f40`): take #200, #199, #194,
   `1413492` and the releases; port #197 `--notify` onto `notify-send` with
   `--recent`; decline #165 (our `--output` already does it); fork #4 as an extra.

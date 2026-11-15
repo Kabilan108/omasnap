@@ -3407,7 +3407,8 @@ void CaptureEditor::handOffEditor(bool toWindow) {
   const OperationLog log = currentOperationLog();
   const QString program = QCoreApplication::applicationFilePath();
   const auto launcher = processLauncher_;
-  const auto pinDocument = pinDocument_;
+  // Not const: the worker must move this out so the pin's lock drops before the future finishes.
+  auto pinDocument = pinDocument_;
   const QString monitor = presentationOutputName();
   auto *watcher = new QFutureWatcher<QString>(this);
   connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, snapshotsSuppressed] {
@@ -3681,7 +3682,8 @@ void CaptureEditor::dismissEditor(bool remember) {
   setEnabled(false);
   setStatus(pinDocument_ ? QStringLiteral("Returning to pinned capture…")
                         : QStringLiteral("Keeping recent capture…"));
-  const auto document = pinDocument_;
+  // Not const: the worker must move this out so the pin's lock drops before the future finishes.
+  auto document = pinDocument_;
   const CaptureData capture = capture_;
   const QImage source = pristineSource_;
   const auto previous = editingRecent_;
