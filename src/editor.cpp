@@ -4872,7 +4872,14 @@ void CaptureEditor::enterEvent(QEnterEvent *event) {
   cursor_ = event->position();
   if (capturePending_)
     return;
-  trackRecentsHover();
+  // Entry may fold the shelf but never fans it out: a pointer resting where
+  // the stack appears would otherwise open it only if the list loaded first.
+  if (recentsOpen_) {
+    if (recentsHotZone().contains(cursor_))
+      hoveredRecent_ = recentAt(cursor_);
+    else
+      setRecentsOpen(false);
+  }
   updatePointerCursor();
   update(oldVisual | pointerMotionRegion(cursor_));
 }

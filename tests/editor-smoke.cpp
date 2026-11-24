@@ -42,6 +42,7 @@
 #include <QTextLayout>
 #include <QBuffer>
 #include <QCloseEvent>
+#include <QCursor>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
@@ -6149,10 +6150,19 @@ bool runRecentsShelfSmoke(QApplication &application, QString &error) {
   {
     CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
     editor.resize(800, 600);
-    editor.show();
-    application.processEvents();
+    // A pointer already resting on the stack when the overlay appears, after
+    // the list has loaded, must not fan it out: only motion does.
     if (!editor.waitForRecents() || editor.recentCountForTest() != 1) {
       error = QStringLiteral("Select overlay did not list the shelved capture");
+      return false;
+    }
+    const QPoint restingOnStack =
+        editor.recentCardRectForTest(0).center().toPoint();
+    QCursor::setPos(editor.mapToGlobal(restingOnStack));
+    editor.show();
+    application.processEvents();
+    if (editor.mapFromGlobal(QCursor::pos()) != restingOnStack) {
+      error = QStringLiteral("Shelf check could not rest the pointer on the stack");
       return false;
     }
     if (editor.recentsOpenForTest()) {
