@@ -1569,10 +1569,12 @@ bool probeFocusedMonitor(MonitorInfo &monitor, QString &error) {
   return parseFocusedMonitor(output.output, workspaces.output, monitor, error);
 }
 
-bool queryFocusedOutputName(QString &name, QString &error) {
+bool queryFocusedOutputName(QString &name, QString &error, int timeoutMs) {
   const ProcessResult output = runProcess(
-      QStringLiteral("niri"), {QStringLiteral("msg"), QStringLiteral("--json"),
-                               QStringLiteral("focused-output")});
+      QStringLiteral("niri"),
+      {QStringLiteral("msg"), QStringLiteral("--json"),
+       QStringLiteral("focused-output")},
+      {}, timeoutMs);
   if (!output.finished || output.exitCode != 0) {
     error = QStringLiteral("Could not query the focused Niri output: %1")
                 .arg(processFailure(output));

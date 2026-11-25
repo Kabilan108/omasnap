@@ -163,8 +163,10 @@ enum class AnnotationLayer { Redaction, Default };
                                        TextFont textFont = TextFont::Neucha);
 /** Discovers the focused Niri output and its active workspace. */
 [[nodiscard]] bool probeFocusedMonitor(MonitorInfo &monitor, QString &error);
-/** Names the Niri output that currently has keyboard focus. */
-[[nodiscard]] bool queryFocusedOutputName(QString &name, QString &error);
+/** Names the Niri output that currently has keyboard focus. `timeoutMs`
+ *  bounds a stalled `niri msg`. */
+[[nodiscard]] bool queryFocusedOutputName(QString &name, QString &error,
+                                          int timeoutMs = 10000);
 /**
  * Captures the given output's pixels through ext-image-copy-capture. Pure I/O
  * and image work (no GUI objects): safe on any thread.
