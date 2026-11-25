@@ -42,6 +42,7 @@
               ./CMakeLists.txt
               ./LICENSE
               ./omasnap.desktop
+              ./omasnap.svg
               ./protocols
               ./src
               ./tests
