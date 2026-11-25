@@ -93,7 +93,8 @@ Leave untracked files in the main checkout alone.
    - Set the release version (see `AGENTS.md`).
 
    Open a PR against `niri-native` whose body includes the review log. Watch CI by
-   run ID; both the Nix and Arch jobs must pass. Merge with a merge commit, run
+   run ID; both the Nix and Arch jobs must pass. Ignore the Entire Gates check, which
+   fails on its approvals gate; Tony doesn't use it. Merge with a merge commit, run
    `nix build 'github:Kabilan108/omasnap/<merge sha>'` and confirm it exits 0, then
    tag and push that one tag. Watch the tag
    workflow by run ID, then write release notes naming the upstream base and what Tony
