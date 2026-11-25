@@ -345,35 +345,48 @@ ProcessResult runProcess(const QString &program, const QStringList &arguments,
   if (maxOutputBytes >= 0) {
     QByteArray output;
     const QDeadlineTimer deadline(timeoutMs);
-    bool running = true;
-    while (running) {
-      running = process.state() != QProcess::NotRunning &&
-                !deadline.hasExpired();
-      if (running)
-        process.waitForReadyRead(
-            static_cast<int>(std::max<qint64>(1, deadline.remainingTime())));
+    while (process.state() != QProcess::NotRunning && !deadline.hasExpired()) {
+      const int remaining =
+          static_cast<int>(std::max<qint64>(1, deadline.remainingTime()));
+      const bool ready = process.waitForReadyRead(remaining);
       output += process.readAllStandardOutput();
-      if (output.size() > maxOutputBytes) {
-        process.kill();
-        process.waitForFinished(1000);
-        ProcessResult refused;
-        refused.outputTooLarge = true;
-        return refused;
+      if (output.size() > maxOutputBytes)
+        break;
+      // Once the child closes stdout before exiting, waitForReadyRead()
+      // returns false immediately; wait for exit instead of busy-spinning.
+      if (!ready && process.state() != QProcess::NotRunning) {
+        const qint64 waitMs = deadline.remainingTime();
+        if (waitMs > 0)
+          process.waitForFinished(static_cast<int>(waitMs));
       }
+    }
+    output += process.readAllStandardOutput();
+    if (output.size() > maxOutputBytes) {
+      process.kill();
+      process.waitForFinished(1000);
+      ProcessResult refused;
+      refused.outputTooLarge = true;
+      return refused;
     }
     const bool finished = process.state() == QProcess::NotRunning;
     if (!finished) {
       process.kill();
       process.waitForFinished(1000);
     }
+    const bool normalExit =
+        finished && process.exitStatus() == QProcess::NormalExit;
     return {output, process.readAllStandardError(),
-            finished ? process.exitCode() : -1, finished};
+            normalExit ? process.exitCode() : -1, normalExit};
   }
   const bool finished = process.waitForFinished(timeoutMs);
-  if (!finished)
+  if (!finished) {
     process.kill();
+    process.waitForFinished(1000);
+  }
+  const bool normalExit =
+      finished && process.exitStatus() == QProcess::NormalExit;
   return {process.readAllStandardOutput(), process.readAllStandardError(),
-          finished ? process.exitCode() : -1, finished};
+          normalExit ? process.exitCode() : -1, normalExit};
 }
 
 QString processFailure(const ProcessResult &result) {
@@ -1911,7 +1924,14 @@ QImage renderCapture(const CaptureData &capture, const QRectF &selection,
   painter.save();
   painter.translate(marginX, marginY);
   painter.scale(scaleX, scaleY);
-  painter.setClipRect(QRectF(QPointF(), selection.size()));
+  if (framedBackground) {
+    QPainterPath cardClip;
+    cardClip.addRoundedRect(QRectF(QPointF(), selection.size()),
+                            kCaptureImageRadius, kCaptureImageRadius);
+    painter.setClipPath(cardClip);
+  } else {
+    painter.setClipRect(QRectF(QPointF(), selection.size()));
+  }
   paintDefaultLayer(painter, cropped, QRectF(QPointF(), selection.size()),
                     annotations);
   painter.restore();
@@ -2086,24 +2106,19 @@ bool quickOutput(QImage image, QuickOutputMode mode, QString &error,
   if (path.isEmpty() || !saveTemporarySnapshot(image, path, error))
     return false;
 
-  if (mode == QuickOutputMode::Copy || mode == QuickOutputMode::Both) {
+  if (mode == QuickOutputMode::Both) {
     if (!copyPngFileToClipboard(path, error)) {
       QFile::remove(path);
       return false;
     }
   }
-  if (mode == QuickOutputMode::Save || mode == QuickOutputMode::Both) {
-    const QString saved = moveSnapshotToScreenshots(path, error);
-    if (saved.isEmpty())
-      return false;
-    sendCaptureNotification(mode == QuickOutputMode::Save
-                                ? QStringLiteral("Screenshot saved")
-                                : QStringLiteral("Screenshot saved and copied"),
-                            saved, log.recentId);
-  } else {
-    QFile::remove(path);
-    sendCaptureNotification(QStringLiteral("Screenshot copied to clipboard"));
-  }
+  const QString saved = moveSnapshotToScreenshots(path, error);
+  if (saved.isEmpty())
+    return false;
+  sendCaptureNotification(mode == QuickOutputMode::Save
+                              ? QStringLiteral("Screenshot saved")
+                              : QStringLiteral("Screenshot saved and copied"),
+                          saved, log.recentId);
   return true;
 }
 
@@ -2220,14 +2235,20 @@ QString editorHandoffPath() {
 bool saveEditorHandoff(const QImage &source, const QString &path,
                        const OperationLog &log, const QString &token,
                        QString &error) {
-  if (!saveTemporarySnapshot(source, path, error) ||
-      !saveOperationLog(operationLogPath(path), log, error))
+  if (!saveTemporarySnapshot(source, path, error))
     return false;
+  const QString logPath = operationLogPath(path);
+  if (!saveOperationLog(logPath, log, error)) {
+    QFile::remove(path);
+    return false;
+  }
   QSaveFile marker(path + QStringLiteral(".handoff"));
   const QByteArray bytes = token.toUtf8();
   if (bytes.size() != 32 || !marker.open(QIODevice::WriteOnly) ||
       !marker.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) ||
       marker.write(bytes) != bytes.size() || !marker.commit()) {
+    QFile::remove(path);
+    QFile::remove(logPath);
     error = QStringLiteral("Could not record editor handoff ownership");
     return false;
   }
@@ -2308,7 +2329,8 @@ bool savePinnedSnapshot(QImage image, const QString &path,
   sidecar.recentId = recentId;
   if (!savedPath.isEmpty())
     sidecar.savedPath = QFileInfo(savedPath).absoluteFilePath();
-  if (!logicalSize.isEmpty() &&
+  if ((!logicalSize.isEmpty() || !recentId.isEmpty() ||
+       !savedPath.isEmpty()) &&
       !saveOperationLog(operationLogPath(path), sidecar, error)) {
     QFile::remove(path);
     return false;
@@ -2903,8 +2925,13 @@ bool saveOperationLog(const QString &path, const OperationLog &log,
                 .arg(file.errorString());
     return false;
   }
-  file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
-  file.putChar('\n');
+  const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Compact);
+  if (file.write(json) != json.size() || !file.putChar('\n')) {
+    file.cancelWriting();
+    error = QStringLiteral("Could not write operation log: %1")
+                .arg(file.errorString());
+    return false;
+  }
   if (!file.commit()) {
     error = QStringLiteral("Could not write operation log: %1")
                 .arg(file.errorString());
@@ -3006,7 +3033,7 @@ bool copyTextToClipboard(const QString &text, QString &error) {
 QString recognizeText(const QImage &image, QString &error) {
   QByteArray payload;
   QBuffer buffer(&payload);
-  if (!buffer.open(QIODevice::WriteOnly) || !image.save(&buffer, "PNG")) {
+  if (!buffer.open(QIODevice::WriteOnly) || !writePng(image, buffer)) {
     error = QStringLiteral("Could not prepare image for OCR");
     return {};
   }

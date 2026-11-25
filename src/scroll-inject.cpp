@@ -74,13 +74,13 @@ struct WlrPointer {
   void park(int x, int y) {
     if (!pointer || !target)
       return;
-    const auto width = static_cast<std::uint32_t>(std::max(1, target->width));
-    const auto height = static_cast<std::uint32_t>(std::max(1, target->height));
+    const int width = std::max(1, target->width);
+    const int height = std::max(1, target->height);
     zwlr_virtual_pointer_v1_motion_absolute(
         pointer, timeMs(),
-        static_cast<std::uint32_t>(std::clamp(x, 0, target->width)),
-        static_cast<std::uint32_t>(std::clamp(y, 0, target->height)), width,
-        height);
+        static_cast<std::uint32_t>(std::clamp(x, 0, width)),
+        static_cast<std::uint32_t>(std::clamp(y, 0, height)),
+        static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height));
     zwlr_virtual_pointer_v1_frame(pointer);
     wl_display_flush(display);
     sleepMs(kPointerNudgeSettleMs);
@@ -125,7 +125,7 @@ struct WlrPointer {
 };
 
 void injectOutputName(void *data, wl_output *, const char *name) {
-  static_cast<WlrPointer::Output *>(data)->name = name;
+  static_cast<WlrPointer::Output *>(data)->name = name ? name : "";
 }
 void injectOutputMode(void *data, wl_output *, std::uint32_t flags, int32_t w,
                       int32_t h, int32_t) {

@@ -185,7 +185,8 @@ void CaptureEditor::saveAsToPath(const QString &path) {
     const QImage image = renderCapture(capture, selection, annotations,
                                        background, shadow, boundary, backdrop);
     QString error;
-    if (savePngFile(image, path, error)) {
+    const bool saved = savePngFile(image, path, error);
+    if (saved) {
       // Under --notify the saved file is announced instead of previewed.
       bool announced = true;
       if (notifySavedCaptures()) {
@@ -203,8 +204,12 @@ void CaptureEditor::saveAsToPath(const QString &path) {
         document->finishSavedPreview(log, path);
     }
     // Close as soon as the file is announced; retain the editable source and
-    // log afterward, just as other completed captures do.
+    // log afterward, just as other completed captures do. Skip retention when
+    // writing the file failed so an earlier recent entry is not evicted while
+    // the editor stays open for retry.
     completion.addResult(error);
+    if (!saved)
+      return;
     QString recentError;
     if (!recent.record(source, log, image, recentError,
                        previous ? &*previous : nullptr))

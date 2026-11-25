@@ -1,9 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Omasnap
+Name=Screenshot
 Comment=Capture and annotate a screenshot
-Exec=omasnap
-Icon=camera-photo
+Exec=omasnap %f
+Icon=omasnap
 Terminal=false
 Categories=Graphics;
+MimeType=image/png;image/jpeg;image/pjpeg;image/gif;image/bmp;image/x-bmp;image/vnd.microsoft.icon;image/x-icon;image/x-portable-bitmap;image/x-portable-graymap;image/x-portable-pixmap;image/x-portable-anymap;image/x-xpixmap;image/x-xbitmap;
 StartupNotify=false
