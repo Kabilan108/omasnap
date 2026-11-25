@@ -2,10 +2,11 @@
 
 A native Wayland screenshot and annotation overlay for Niri. This is a Niri fork of
 [tobi/omasnap](https://github.com/tobi/omasnap); the integration records
+[docs/upstream-v1.26-integration.md](docs/upstream-v1.26-integration.md),
 [docs/upstream-v1.25-integration.md](docs/upstream-v1.25-integration.md) and
 [docs/upstream-v1.21-integration.md](docs/upstream-v1.21-integration.md) say what it
 takes from upstream and what it changes. Upstream's [changelog](CHANGELOG.md) covers
-the shared features.
+the shared features through 1.25.0.
 
 Omasnap captures the focused output before mapping an exclusive layer-shell surface, so
 the editor never appears in its own screenshot. The editor retains annotations as movable,
