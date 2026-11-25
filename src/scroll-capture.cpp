@@ -53,7 +53,6 @@ constexpr int kMaxSettleMs = 2000;
 /// the stitcher aligns on; half the region leaves it plenty at any scroll
 /// speed, and the notch count is fitted to it after the first verified step.
 constexpr double kTargetStepFraction = 0.45;
-constexpr int kMaxNotchesPerTick = 12;
 constexpr int kMinRegion = 32; // logical px
 /// How far outside the region its grips and its draggable border reach. The
 /// region itself has to stay untouched: it is what the capture crops.
@@ -365,6 +364,7 @@ void ScrollCapturePanel::startInjector(bool continuing) {
       if (!error.isEmpty()) {
         if (continuing) {
           autoStalled_ = true;
+          applyInputRegion();
           setStatus(QStringLiteral("Could not start auto-scroll again: %1")
                         .arg(error), true);
           return;
@@ -598,7 +598,8 @@ void ScrollCapturePanel::autoCaptureLoop() {
                              : w.regionPhysical.width();
       const int fitted = static_cast<int>(
           std::lround(extent * kTargetStepFraction / std::max(perNotch, 1.0)));
-      w.notchesPerTick = std::clamp(fitted, 1, kMaxNotchesPerTick);
+      w.notchesPerTick = std::clamp(fitted, 1, stitch::kMaxNotchesPerTick);
+      w.autoSession.setNotchesPerTick(w.notchesPerTick);
       w.notchesFitted = true;
       qInfo().noquote() << QStringLiteral("auto: %1 px per notch, region %2 px, "
                                           "%3 notches per tick from here")
@@ -700,16 +701,47 @@ void ScrollCapturePanel::finishCapture() {
   setStatus(QStringLiteral("Stitching…"));
   stopWorker();
   Worker &w = *worker_;
-  QString error;
+  const bool autoMode = mode_ == Mode::Auto;
   const bool started =
-      mode_ == Mode::Auto ? w.autoSession.started() : w.session.started();
+      autoMode ? w.autoSession.started() : w.session.started();
   if (!started) {
     cancel();
     return;
   }
-  QImage assembled = mode_ == Mode::Auto ? w.autoSession.finish(error)
-                                        : w.session.finish(error);
-  if (assembled.isNull()) {
+  // Assembling a tall page allocates and copies the whole image, so it runs on
+  // the worker future that stopWorker(), cancel() and release() wait for.
+  const quint64 generation = captureGeneration_;
+  workerFuture_ = QtConcurrent::run([this, &w, autoMode, generation] {
+    QString error;
+    QImage assembled =
+        autoMode ? w.autoSession.finish(error) : w.session.finish(error);
+    QImage result;
+    if (!assembled.isNull())
+      result = assembled.convertToFormat(QImage::Format_ARGB32);
+    if (!result.isNull() && !w.debugDir.isEmpty()) {
+      result.save(w.debugDir + QStringLiteral("/scroll-stitched.png"), "PNG");
+      if (!w.firstCrop.isNull())
+        w.firstCrop.save(w.debugDir + QStringLiteral("/scroll-first-frame.png"), "PNG");
+      if (!w.lastCrop.isNull())
+        w.lastCrop.save(w.debugDir + QStringLiteral("/scroll-last-frame.png"), "PNG");
+    }
+    // Queued even from the UI thread: stopWorker() can run this job inline,
+    // and finishing inside that wait would wait on itself.
+    QMetaObject::invokeMethod(
+        this,
+        [this, result, error, generation] {
+          if (!released_ && generation == captureGeneration_ &&
+              phase_ == Phase::Finishing)
+            finishStitched(result, error);
+        },
+        Qt::QueuedConnection);
+  });
+}
+
+void ScrollCapturePanel::finishStitched(const QImage &result,
+                                        const QString &error) {
+  Worker &w = *worker_;
+  if (result.isNull()) {
     phase_ = Phase::Capturing;
     setStatus(QStringLiteral("Stitch failed: %1").arg(error), true);
     // The worker's state is intact; restart the (manual) loop so the user can
@@ -726,14 +758,6 @@ void ScrollCapturePanel::finishCapture() {
         << QStringLiteral("scroll: capture may contain %1 repeated or missing "
                           "section(s)")
                .arg(w.autoSession.unverifiedSeams());
-  const QImage result = assembled.convertToFormat(QImage::Format_ARGB32);
-  if (!w.debugDir.isEmpty()) {
-    result.save(w.debugDir + QStringLiteral("/scroll-stitched.png"), "PNG");
-    if (!w.firstCrop.isNull())
-      w.firstCrop.save(w.debugDir + QStringLiteral("/scroll-first-frame.png"), "PNG");
-    if (!w.lastCrop.isNull())
-      w.lastCrop.save(w.debugDir + QStringLiteral("/scroll-last-frame.png"), "PNG");
-  }
   const int kept = mode_ == Mode::Auto ? w.autoSession.keptFrames()
                                        : w.session.keptFrames();
   qInfo().noquote() << QStringLiteral("scroll: stitched %1 frames into %2x%3")
@@ -781,8 +805,10 @@ void ScrollCapturePanel::continueCapture() {
   // inside the frame.
   if (phase_ != Phase::Capturing || !worker_ || mode_ != Mode::Auto)
     return;
+  stopWorker();
   autoStalled_ = false;
   stopRequested_ = false;
+  applyInputRegion();
   worker_->autoSession.resumeFromEnd(); // a stop looks just like an end
   worker_->lastCycle = 0; // a new handshake counts from one again
   startInjector(true);
@@ -1135,6 +1161,11 @@ void ScrollCapturePanel::mousePressEvent(QMouseEvent *event) {
     else if (cancelButtonRect().contains(point))
       cancel();
     return; // clicks elsewhere in the chrome do nothing
+  }
+  if (phase_ == Phase::Finishing) {
+    if (cancelButtonRect().contains(event->position().toPoint()))
+      cancel();
+    return;
   }
   if (phase_ == Phase::Selected) {
     const QPoint point = event->position().toPoint();

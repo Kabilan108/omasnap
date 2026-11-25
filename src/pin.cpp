@@ -269,6 +269,11 @@ public:
       if (std::exchange(documentReloadPending_, false))
         reloadPinDocument();
     });
+    toastTimer_.setSingleShot(true);
+    connect(&toastTimer_, &QTimer::timeout, this, [this] {
+      toast_.clear();
+      update();
+    });
     auto *payload = new QFutureWatcher<DragPayload>(this);
     connect(payload, &QFutureWatcher<DragPayload>::finished, this,
             [this, payload, path = path_] {
@@ -805,10 +810,7 @@ private:
   void showToast(QString message) {
     toast_ = std::move(message);
     update();
-    QTimer::singleShot(kToastMs, this, [this] {
-      toast_.clear();
-      update();
-    });
+    toastTimer_.start(kToastMs);
   }
 
   void applyPosition(QPoint position) {
@@ -878,6 +880,7 @@ private:
   QPoint dragOffset_;
   bool dragging_ = false;
   QString toast_;
+  QTimer toastTimer_;
   bool hovered_ = false;
   QElapsedTimer shownClock_;
   bool pendingKeyboard_ = false;

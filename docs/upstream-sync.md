@@ -16,6 +16,12 @@ skip list. Remove an entry when its reason no longer holds.
 Newest first. One line per cycle that reached a proposal: date, upstream head
 examined, outcome.
 
+- 2026-11-24: integrated upstream `v1.26.3` (`c382a92`): took #228, #241, #242 and
+  #243 (less their Hyprland pieces), #223 and `8cd4799`; ported #222's icon, #243's
+  pin toast timer, part of `5ec4434`, and a 500 ms bound from #207; declined the
+  Omarchy build and packaging (#227, #230, `54d63a7`), the Screenshot rename (#229)
+  and the release bumps. Fixed fork #10. Shipped as 2026.11.24. Filed fork #11 (pin
+  drag-out after an edit, pre-existing).
 - 2026-11-10: integrated upstream `v1.25.0` (`008a3d1`), which also covers the
   deferred v1.24.0 batch: took #200, #199, #196, #194, #188, #187, #186, #185, #173 and
   `1413492`; ported #197 `--notify` onto `notify-send` and `b0f97d3` onto `H`; declined

@@ -34,7 +34,7 @@
         in
         pkgs.stdenv.mkDerivation {
           pname = "omasnap";
-          version = "2026.11.15";
+          version = "2026.11.24";
           src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
@@ -42,6 +42,7 @@
               ./CMakeLists.txt
               ./LICENSE
               ./omasnap.desktop
+              ./omasnap.svg
               ./protocols
               ./src
               ./tests

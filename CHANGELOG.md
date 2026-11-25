@@ -1,6 +1,9 @@
 # Changelog
 
-This is upstream Omasnap's changelog. The Niri fork's differences are recorded in
+This is upstream Omasnap's changelog through 1.25.0; upstream stopped keeping one
+after 1.26.0, so later upstream changes are listed in the integration records. The
+Niri fork's differences are recorded in
+[docs/upstream-v1.26-integration.md](docs/upstream-v1.26-integration.md),
 [docs/upstream-v1.25-integration.md](docs/upstream-v1.25-integration.md),
 [docs/upstream-v1.21-integration.md](docs/upstream-v1.21-integration.md) and
 [docs/upstream-v1.17.1-integration.md](docs/upstream-v1.17.1-integration.md).

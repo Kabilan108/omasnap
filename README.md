@@ -2,10 +2,11 @@
 
 A native Wayland screenshot and annotation overlay for Niri. This is a Niri fork of
 [tobi/omasnap](https://github.com/tobi/omasnap); the integration records
+[docs/upstream-v1.26-integration.md](docs/upstream-v1.26-integration.md),
 [docs/upstream-v1.25-integration.md](docs/upstream-v1.25-integration.md) and
 [docs/upstream-v1.21-integration.md](docs/upstream-v1.21-integration.md) say what it
 takes from upstream and what it changes. Upstream's [changelog](CHANGELOG.md) covers
-the shared features.
+the shared features through 1.25.0.
 
 Omasnap captures the focused output before mapping an exclusive layer-shell surface, so
 the editor never appears in its own screenshot. The editor retains annotations as movable,
@@ -178,6 +179,7 @@ The install step places:
 
 - `~/.local/bin/omasnap`
 - `~/.local/share/applications/omasnap.desktop`
+- `~/.local/share/icons/hicolor/scalable/apps/omasnap.svg`
 - `~/.local/share/licenses/omasnap/Neucha-OFL.txt`
 - `~/.local/share/licenses/omasnap/JetBrainsMono-OFL.txt`
 - `~/.local/share/licenses/omasnap/Inter-OFL.txt`
@@ -309,6 +311,9 @@ from a file browser keeps its original size in the annotator while
 preserving every native pixel. This also covers cropped, framed, and scrolling
 captures. Images without this metadata use their pixel dimensions; print DPI
 alone is not treated as a screenshot's display scale.
+
+File managers list Omasnap under Open With for images without making it the default
+image viewer. A NixOS or Home Manager install registers the entry on its own.
 
 To open the image currently on the Wayland clipboard:
 

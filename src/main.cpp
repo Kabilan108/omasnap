@@ -389,9 +389,11 @@ int main(int argc, char **argv) {
     }
     describeFileCapture(capture, image, restoredLog);
     capture.monitor.name = outputName;
+    // The lookup is optional, so a stalled niri falls back to the primary
+    // screen quickly instead of delaying the editor.
     QString outputError;
     if (capture.monitor.name.isEmpty() &&
-        !queryFocusedOutputName(capture.monitor.name, outputError))
+        !queryFocusedOutputName(capture.monitor.name, outputError, 500))
       qWarning().noquote() << outputError;
     captureMode = CaptureEditor::CaptureMode::File;
     qInfo().noquote() << QStringLiteral("Opened %1 for annotation (%2x%3)")

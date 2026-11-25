@@ -42,6 +42,7 @@
 #include <QTextLayout>
 #include <QBuffer>
 #include <QCloseEvent>
+#include <QCursor>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
@@ -3540,17 +3541,22 @@ bool runTextOutlineCheck(QString &error) {
 bool runEditorWindowConfigCheck(QString &error) {
   const QString path =
       QDir(QDir::tempPath()).filePath(QStringLiteral("omasnap-editor-mode.conf"));
-  const auto writeConf = [&path](const QString &body) {
+  const auto writeConf = [&path, &error](const QString &body) {
     QFile file(path);
-    file.open(QIODevice::WriteOnly | QIODevice::Truncate);
-    file.write(body.toUtf8());
-    file.close();
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+        file.write(body.toUtf8()) == body.toUtf8().size())
+      return true;
+    error = QStringLiteral("Could not write %1").arg(path);
+    return false;
   };
-  writeConf(QStringLiteral("[editor]\nmode = window\n"));
+  if (!writeConf(QStringLiteral("[editor]\nmode = window\n")))
+    return false;
   const bool window = loadEditorWindowMode(path);
-  writeConf(QStringLiteral("[editor]\nmode = overlay\n"));
+  if (!writeConf(QStringLiteral("[editor]\nmode = overlay\n")))
+    return false;
   const bool overlay = loadEditorWindowMode(path);
-  writeConf(QStringLiteral("[output]\ndirectory = /tmp\n"));
+  if (!writeConf(QStringLiteral("[output]\ndirectory = /tmp\n")))
+    return false;
   const bool absent = loadEditorWindowMode(path);
   QFile::remove(path);
   const bool missing =
@@ -3560,7 +3566,8 @@ bool runEditorWindowConfigCheck(QString &error) {
     return false;
   }
 
-  writeConf(QStringLiteral("[editor]\nbackdrop = translucent\n"));
+  if (!writeConf(QStringLiteral("[editor]\nbackdrop = translucent\n")))
+    return false;
   const bool translucent = loadEditorWindowBackdropOpaque(path);
   QFile::remove(path);
   const bool opaqueDefault =
@@ -6149,10 +6156,19 @@ bool runRecentsShelfSmoke(QApplication &application, QString &error) {
   {
     CaptureEditor editor(capture, CaptureEditor::CaptureMode::Region);
     editor.resize(800, 600);
-    editor.show();
-    application.processEvents();
+    // A pointer already resting on the stack when the overlay appears, after
+    // the list has loaded, must not fan it out: only motion does.
     if (!editor.waitForRecents() || editor.recentCountForTest() != 1) {
       error = QStringLiteral("Select overlay did not list the shelved capture");
+      return false;
+    }
+    const QPoint restingOnStack =
+        editor.recentCardRectForTest(0).center().toPoint();
+    QCursor::setPos(editor.mapToGlobal(restingOnStack));
+    editor.show();
+    application.processEvents();
+    if (editor.mapFromGlobal(QCursor::pos()) != restingOnStack) {
+      error = QStringLiteral("Shelf check could not rest the pointer on the stack");
       return false;
     }
     if (editor.recentsOpenForTest()) {
@@ -12339,6 +12355,7 @@ int main(int argc, char **argv) {
   if (!heldLockPath.isEmpty())
     return runInstanceLockHolder(heldLockPath);
 
+  qputenv("QT_QPA_PLATFORMTHEME", "generic"); // as main() does
   QApplication application(argc, argv);
   QCommandLineParser parser;
   parser.setApplicationDescription(QStringLiteral("Omasnap headless smoke checks"));
