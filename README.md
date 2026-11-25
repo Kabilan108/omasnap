@@ -310,6 +310,9 @@ preserving every native pixel. This also covers cropped, framed, and scrolling
 captures. Images without this metadata use their pixel dimensions; print DPI
 alone is not treated as a screenshot's display scale.
 
+File managers list Omasnap under Open With for images without making it the default
+image viewer. A NixOS or Home Manager install registers the entry on its own.
+
 To open the image currently on the Wayland clipboard:
 
 ```bash
